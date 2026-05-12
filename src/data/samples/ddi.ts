@@ -9,6 +9,7 @@ import { PHYSIOLOGY_DB } from '../physiology';
 const human = PHYSIOLOGY_DB.human;
 
 export const DDI_SAMPLE: DDIInputs = {
+  mmKinetics: [],
   compound: {
     name: 'Compound B',
     id: 'cpd-B-002',

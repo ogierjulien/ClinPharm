@@ -341,39 +341,96 @@ export type IVIVESessionResult = SessionResult<IVIVEInputs, IVIVEResults>;
 // MODULE 3 — DDI TYPES
 // ---------------------------------------------------------------------------
 
+// Primary CYP enzymes (regulatory focus per ICH M12 / FDA / EMA)
 export type CYPEnzyme =
   | 'CYP1A2'
+  | 'CYP2A6'
   | 'CYP2B6'
   | 'CYP2C8'
   | 'CYP2C9'
   | 'CYP2C19'
   | 'CYP2D6'
+  | 'CYP2E1'
+  | 'CYP2J2'
   | 'CYP3A4'
   | 'CYP3A5'
+  | 'CYP4F2'
   | 'other';
 
+// Phase 1 non-CYP enzymes (ICH M12 Section 3.2)
+export type NonCYPPhase1Enzyme =
+  | 'ADH'
+  | 'ALDH'
+  | 'AO'
+  | 'CES1'
+  | 'CES2'
+  | 'FMO'
+  | 'MAO-A'
+  | 'MAO-B'
+  | 'XO';
+
+// UGT enzymes — Phase 2 (ICH M12 Section 3.3)
+export type UGTEnzyme =
+  | 'UGT1A1'
+  | 'UGT1A3'
+  | 'UGT1A4'
+  | 'UGT1A6'
+  | 'UGT1A9'
+  | 'UGT1A10'
+  | 'UGT2B4'
+  | 'UGT2B7'
+  | 'UGT2B10'
+  | 'UGT2B15'
+  | 'UGT2B17';
+
+// Other Phase 2 enzymes (ICH M12 Section 3.3)
+export type Phase2OtherEnzyme =
+  | 'GST'
+  | 'NAT1'
+  | 'NAT2'
+  | 'SULT1A1'
+  | 'SULT1A2'
+  | 'SULT2A1';
+
+// Union of all drug-metabolising enzymes
+export type DrugMetabolizingEnzyme =
+  | CYPEnzyme
+  | NonCYPPhase1Enzyme
+  | UGTEnzyme
+  | Phase2OtherEnzyme;
+
+// Drug transporters — regulatory scope per ICH M12
 export type Transporter =
+  // Efflux (intestinal / systemic)
   | 'P-gp'
   | 'BCRP'
+  | 'MRP2'
+  // Hepatic uptake
   | 'OATP1B1'
   | 'OATP1B3'
+  | 'OCT1'
+  | 'NTCP'
+  // Renal secretion
   | 'OAT1'
+  | 'OAT2'
   | 'OAT3'
   | 'OCT2'
   | 'MATE1'
-  | 'MATE2K';
+  | 'MATE2K'
+  // Biliary efflux / safety
+  | 'BSEP';
 
 export type DDIRiskLevel = 'no_risk' | 'potential_risk' | 'risk' | 'high_risk';
 
 export interface SubstratePathway {
-  enzyme: CYPEnzyme | Transporter;
+  enzyme: DrugMetabolizingEnzyme | Transporter;
   fm: number;               // fraction metabolized / transported
   isSensitive?: boolean;    // sensitive substrate flag
   isMajor?: boolean;        // major substrate flag (fm ≥ 0.25 or 0.50)
 }
 
 export interface ReversibleInhibitorData {
-  enzyme: CYPEnzyme | Transporter;
+  enzyme: DrugMetabolizingEnzyme | Transporter;
   Ki?: number;              // µM unbound
   IC50?: number;            // µM
   Iu_max?: number;          // maximum unbound inhibitor concentration (µM)
@@ -383,7 +440,7 @@ export interface ReversibleInhibitorData {
 }
 
 export interface TDIData {
-  enzyme: CYPEnzyme;
+  enzyme: DrugMetabolizingEnzyme;
   kinact: number;           // h⁻¹
   KI: number;               // µM
   Iu_max: number;           // µM
@@ -392,11 +449,23 @@ export interface TDIData {
 }
 
 export interface InductionData {
-  enzyme: CYPEnzyme;
+  enzyme: DrugMetabolizingEnzyme;
   Emax: number;             // fold
   EC50: number;             // µM
   Iu_max: number;           // µM
   d?: number;               // degradation scaling (default 1)
+}
+
+// Michaelis-Menten enzyme kinetics (ICH M12 Section 3 — in-vitro characterisation)
+export interface MMKineticsEntry {
+  id: string;
+  enzyme: string;           // free-text enzyme label
+  Km: number;               // µM  — substrate concentration at half-maximal rate
+  Vmax: number;             // pmol/min/mg protein  OR  pmol/min/10^6 cells
+  substrate_conc?: number;  // µM  — substrate concentration used in the assay
+  CLint_derived?: number;   // µL/min/mg or µL/min/10^6 cells  — derived as Vmax/Km
+  units: 'microsomes' | 'hepatocytes';
+  notes?: string;
 }
 
 export interface TransporterInhibitionData {
@@ -413,6 +482,8 @@ export interface DDIInputs {
   compound: CompoundMetadata;
   // substrate assessment
   substratePathways: SubstratePathway[];
+  // in-vitro Michaelis-Menten kinetics (optional panel)
+  mmKinetics: MMKineticsEntry[];
   // inhibition
   reversibleInhibitors: ReversibleInhibitorData[];
   tdiData: TDIData[];
@@ -455,7 +526,7 @@ export interface DDIResults {
 }
 
 export interface SubstrateResult {
-  enzyme: CYPEnzyme | Transporter;
+  enzyme: DrugMetabolizingEnzyme | Transporter;
   fm: number;
   AUCR_max_inhibition?: number;
   isSensitive: boolean;
@@ -479,7 +550,7 @@ export type DDISessionResult = SessionResult<DDIInputs, DDIResults>;
 // ---------------------------------------------------------------------------
 
 export interface MechanisticStaticEnzymeInputs {
-  enzyme: CYPEnzyme;
+  enzyme: DrugMetabolizingEnzyme;
   fm: number;                  // fraction metabolized by this enzyme (for AUCR)
   // Reversible inhibition
   useReversible: boolean;
@@ -514,7 +585,7 @@ export interface MechanisticStaticIntermediate {
 }
 
 export interface MechanisticStaticEnzymeResult {
-  enzyme: CYPEnzyme;
+  enzyme: DrugMetabolizingEnzyme;
   intermediates: MechanisticStaticIntermediate;
   risk: DDIRiskLevel;
   riskLabel: string;

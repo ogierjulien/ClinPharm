@@ -2,10 +2,13 @@
  * DDI transporter inhibition assessment.
  *
  * Implements regulatory R-value calculations and thresholds for clinically
- * relevant drug transporters per FDA (2020) and EMA (2012) guidance.
+ * relevant drug transporters per ICH M12 (2024), FDA (2020) and EMA (2012).
  *
  * Transporters assessed:
- *   P-gp (MDR1), BCRP, OATP1B1, OATP1B3, OAT1, OAT3, OCT2, MATE1, MATE2-K
+ *   Efflux:         P-gp (MDR1), BCRP, MRP2
+ *   Hepatic uptake: OATP1B1, OATP1B3, OCT1, NTCP
+ *   Renal:          OAT1, OAT2, OAT3, OCT2, MATE1, MATE2-K
+ *   Biliary safety: BSEP
  */
 
 import type {
@@ -40,58 +43,100 @@ export interface TransporterThreshold {
  * MATE1, MATE2-K:   Cmax_unbound / IC50 ≥ 0.02 → investigate
  */
 export const TRANSPORTER_THRESHOLDS: Record<Transporter, TransporterThreshold> = {
+  // ── Intestinal/systemic efflux ──────────────────────────────────────────────
   'P-gp': {
     metric:              'R_gut = 1 + Igut / IC50',
     threshold:           10,
-    regulatorySource:    'FDA (2020) Guidance; EMA (2012) Guideline',
+    regulatorySource:    'ICH M12 (2024); FDA (2020); EMA (2012)',
     useGutConcentration: true,
   },
   'BCRP': {
     metric:              'R_gut = 1 + Igut / IC50',
     threshold:           10,
-    regulatorySource:    'FDA (2020) Guidance; EMA (2012) Guideline',
+    regulatorySource:    'ICH M12 (2024); FDA (2020); EMA (2012)',
     useGutConcentration: true,
   },
+  'MRP2': {
+    // MRP2 (ABCC2) — intestinal and hepatic efflux; ICH M12 recommends
+    // systemic Cmax,u / IC50 ≥ 0.1 triggers further evaluation
+    metric:              'R_sys = Cmax_unbound / IC50',
+    threshold:           0.1,
+    regulatorySource:    'ICH M12 (2024) Section 3.4',
+    useGutConcentration: false,
+  },
+  // ── Hepatic uptake ──────────────────────────────────────────────────────────
   'OATP1B1': {
     metric:              'R_inlet = Iu_inlet / IC50',
     threshold:           0.1,
-    regulatorySource:    'FDA (2020) Guidance; EMA (2012) Guideline',
+    regulatorySource:    'ICH M12 (2024); FDA (2020); EMA (2012)',
     useGutConcentration: false,
   },
   'OATP1B3': {
     metric:              'R_inlet = Iu_inlet / IC50',
     threshold:           0.1,
-    regulatorySource:    'FDA (2020) Guidance; EMA (2012) Guideline',
+    regulatorySource:    'ICH M12 (2024); FDA (2020); EMA (2012)',
     useGutConcentration: false,
   },
+  'OCT1': {
+    // OCT1 (SLC22A1) — hepatic uptake; ICH M12 threshold Iu,h,inlet/IC50 ≥ 0.1
+    metric:              'R_inlet = Iu_inlet / IC50',
+    threshold:           0.1,
+    regulatorySource:    'ICH M12 (2024) Section 3.4',
+    useGutConcentration: false,
+  },
+  'NTCP': {
+    // NTCP (SLC10A1) — hepatic bile-salt uptake; assess when cholestasis risk
+    // identified. ICH M12: Cmax,u / IC50 ≥ 0.1 triggers evaluation
+    metric:              'R_sys = Cmax_unbound / IC50',
+    threshold:           0.1,
+    regulatorySource:    'ICH M12 (2024) Section 3.4',
+    useGutConcentration: false,
+  },
+  // ── Renal secretion ─────────────────────────────────────────────────────────
   'OAT1': {
     metric:              'R_sys = Cmax_unbound / IC50',
     threshold:           0.1,
-    regulatorySource:    'FDA (2020) Guidance',
+    regulatorySource:    'ICH M12 (2024); FDA (2020)',
+    useGutConcentration: false,
+  },
+  'OAT2': {
+    // OAT2 (SLC22A7) — renal secretion; same threshold as OAT1/OAT3
+    metric:              'R_sys = Cmax_unbound / IC50',
+    threshold:           0.1,
+    regulatorySource:    'ICH M12 (2024) Section 3.4',
     useGutConcentration: false,
   },
   'OAT3': {
     metric:              'R_sys = Cmax_unbound / IC50',
     threshold:           0.1,
-    regulatorySource:    'FDA (2020) Guidance',
+    regulatorySource:    'ICH M12 (2024); FDA (2020)',
     useGutConcentration: false,
   },
   'OCT2': {
     metric:              'R_sys = Cmax_unbound / IC50',
     threshold:           0.02,
-    regulatorySource:    'FDA (2020) Guidance',
+    regulatorySource:    'ICH M12 (2024); FDA (2020)',
     useGutConcentration: false,
   },
   'MATE1': {
     metric:              'R_sys = Cmax_unbound / IC50',
     threshold:           0.02,
-    regulatorySource:    'FDA (2020) Guidance',
+    regulatorySource:    'ICH M12 (2024); FDA (2020)',
     useGutConcentration: false,
   },
   'MATE2K': {
     metric:              'R_sys = Cmax_unbound / IC50',
     threshold:           0.02,
-    regulatorySource:    'FDA (2020) Guidance',
+    regulatorySource:    'ICH M12 (2024); FDA (2020)',
+    useGutConcentration: false,
+  },
+  // ── Biliary efflux / safety ─────────────────────────────────────────────────
+  'BSEP': {
+    // BSEP (ABCB11) — drug-induced cholestasis risk marker.
+    // ICH M12: Cmax,u / IC50 ≥ 0.01 triggers further evaluation
+    metric:              'R_sys = Cmax_unbound / IC50',
+    threshold:           0.01,
+    regulatorySource:    'ICH M12 (2024) Section 3.4; DILI safety',
     useGutConcentration: false,
   },
 };
@@ -210,11 +255,11 @@ export function assessTransporterInhibition(
       R = transporterR(I, ic50);
       metricName = `R = 1 + Igut / IC50`;
       equationStr = `R = 1 + Igut / IC50 = 1 + ${I.toExponential(3)} / ${ic50} = ${R.toFixed(3)}`;
-    } else if (transporter === 'OATP1B1' || transporter === 'OATP1B3') {
-      // Hepatic inlet concentration ratio
+    } else if (transporter === 'OATP1B1' || transporter === 'OATP1B3' || transporter === 'OCT1') {
+      // Hepatic inlet concentration ratio — OATP1B1, OATP1B3, OCT1
       const Iu_in = (Iu_systemic ?? Iu_gut ?? 0);
       I = Iu_in;
-      R = transporterRatio(I, ic50);  // just I/IC50 for OATP
+      R = transporterRatio(I, ic50);  // just I/IC50 for hepatic uptake transporters
       metricName = `Iu_inlet / IC50`;
       equationStr = `R = Iu_inlet / IC50 = ${I.toExponential(3)} / ${ic50} = ${R.toFixed(4)}`;
 

@@ -113,6 +113,7 @@ function buildDDIInputsFromRecords(
 
   return {
     compound,
+    mmKinetics: [],
     substratePathways,
     reversibleInhibitors,
     tdiData,
@@ -156,6 +157,7 @@ export function runBatchDDI(records: BatchDDIRecord[]): BatchDDIResult[] {
       // On error, produce a minimal result with a warning
       ddiResults = runDDI({
         compound: { name: compoundName },
+        mmKinetics: [],
         substratePathways: [],
         reversibleInhibitors: [],
         tdiData: [],

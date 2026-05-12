@@ -20,6 +20,10 @@ import type {
   DDIInputs,
   DDIResults,
   CYPEnzyme,
+  NonCYPPhase1Enzyme,
+  UGTEnzyme,
+  Phase2OtherEnzyme,
+  DrugMetabolizingEnzyme,
   Transporter,
   SubstratePathway,
   ReversibleInhibitorData,
@@ -30,7 +34,9 @@ import type {
   Warning,
   MechanisticStaticEnzymeInputs,
   MechanisticStaticResults,
+  MMKineticsEntry,
 } from '@/types';
+import { deriveMMCLint } from '@/engine/ddi/mmKinetics';
 
 import { useAppStore } from '@/store';
 import { runDDI } from '@/engine/ddi';
@@ -46,21 +52,62 @@ import { ddiCSVTemplate, parseDDIBatchCSV, parseFile } from '@/utils/csvImport';
 // Constants
 // ---------------------------------------------------------------------------
 
-const CYP_ENZYMES: CYPEnzyme[] = [
+// Primary CYP enzymes — regulatory focus per ICH M12
+const CYP_ENZYMES_PRIMARY: CYPEnzyme[] = [
   'CYP1A2', 'CYP2B6', 'CYP2C8', 'CYP2C9', 'CYP2C19', 'CYP2D6', 'CYP3A4', 'CYP3A5',
 ];
+// Additional CYP enzymes per ICH M12 Section 3.2
+const CYP_ENZYMES_ADDITIONAL: CYPEnzyme[] = ['CYP2A6', 'CYP2E1', 'CYP2J2', 'CYP4F2'];
 
-const INDUCTION_ENZYMES: CYPEnzyme[] = ['CYP1A2', 'CYP2B6', 'CYP3A4'];
+// All CYP enzymes (used for inhibition tabs)
+const CYP_ENZYMES: CYPEnzyme[] = [...CYP_ENZYMES_PRIMARY, ...CYP_ENZYMES_ADDITIONAL, 'other'];
 
-const TRANSPORTERS: Transporter[] = [
-  'P-gp', 'BCRP', 'OATP1B1', 'OATP1B3', 'OAT1', 'OAT3', 'OCT2', 'MATE1', 'MATE2K',
+// Phase 1 non-CYP enzymes — ICH M12 Section 3.2
+const NON_CYP_PHASE1_ENZYMES: NonCYPPhase1Enzyme[] = [
+  'ADH', 'ALDH', 'AO', 'CES1', 'CES2', 'FMO', 'MAO-A', 'MAO-B', 'XO',
 ];
 
+// UGT enzymes — ICH M12 Section 3.3
+const UGT_ENZYMES: UGTEnzyme[] = [
+  'UGT1A1', 'UGT1A3', 'UGT1A4', 'UGT1A6', 'UGT1A9', 'UGT1A10',
+  'UGT2B4', 'UGT2B7', 'UGT2B10', 'UGT2B15', 'UGT2B17',
+];
+
+// Other Phase 2 enzymes — ICH M12 Section 3.3
+const PHASE2_OTHER_ENZYMES: Phase2OtherEnzyme[] = [
+  'GST', 'NAT1', 'NAT2', 'SULT1A1', 'SULT1A2', 'SULT2A1',
+];
+
+// CYP enzymes eligible for induction (CYP1A2 via AhR; CYP2B6/3A4 via PXR)
+// + UGTs induced via same NR pathways (UGT1A1 via AhR/PXR; UGT1A4/2B7 via PXR)
+const CYP_INDUCTION_ENZYMES: CYPEnzyme[] = ['CYP1A2', 'CYP2B6', 'CYP3A4'];
+const UGT_INDUCTION_ENZYMES: UGTEnzyme[] = ['UGT1A1', 'UGT1A4', 'UGT2B7'];
+
+// UGTs targeted for TDI assessment (most common victims of MBI-like inhibition)
+const UGT_TDI_ENZYMES: UGTEnzyme[] = ['UGT1A1', 'UGT2B7'];
+
+// All transporters per ICH M12 — grouped by function
+const TRANSPORTERS_EFFLUX: Transporter[]       = ['P-gp', 'BCRP', 'MRP2'];
+const TRANSPORTERS_HEPATIC: Transporter[]       = ['OATP1B1', 'OATP1B3', 'OCT1', 'NTCP'];
+const TRANSPORTERS_RENAL: Transporter[]         = ['OAT1', 'OAT2', 'OAT3', 'OCT2', 'MATE1', 'MATE2K'];
+const TRANSPORTERS_BILIARY: Transporter[]       = ['BSEP'];
+const TRANSPORTERS: Transporter[] = [
+  ...TRANSPORTERS_EFFLUX,
+  ...TRANSPORTERS_HEPATIC,
+  ...TRANSPORTERS_RENAL,
+  ...TRANSPORTERS_BILIARY,
+];
+
+// Transporters that use gut-lumen concentration (intestinal efflux)
 const INTESTINAL_TRANSPORTERS: Transporter[] = ['P-gp', 'BCRP'];
+// Transporters that use hepatic inlet concentration
+const HEPATIC_INLET_TRANSPORTERS: Transporter[] = ['OATP1B1', 'OATP1B3', 'OCT1'];
 
 const human = PHYSIOLOGY_DB.human;
 
-const HUMAN_KDEG: Record<CYPEnzyme, number> = {
+// Enzyme degradation rate constants (h⁻¹) — from physiology DB or literature defaults
+const HUMAN_KDEG: Record<string, number> = {
+  // Primary CYPs (Yang et al. 2008, Obach et al. 2006)
   CYP1A2:  human.kdeg_CYP1A2  ?? 0.0208,
   CYP2B6:  human.kdeg_CYP2B6  ?? 0.0096,
   CYP2C8:  human.kdeg_CYP2C8  ?? 0.0213,
@@ -68,8 +115,25 @@ const HUMAN_KDEG: Record<CYPEnzyme, number> = {
   CYP2C19: human.kdeg_CYP2C19 ?? 0.0148,
   CYP2D6:  human.kdeg_CYP2D6  ?? 0.0088,
   CYP3A4:  human.kdeg_CYP3A4  ?? 0.0193,
-  CYP3A5:  human.kdeg_CYP3A4  ?? 0.0193, // use CYP3A4 as proxy
-  other:   0.02,
+  CYP3A5:  human.kdeg_CYP3A4  ?? 0.0193,
+  // Additional CYPs (use CYP3A4 range as approximation)
+  CYP2A6:  0.0150,
+  CYP2E1:  0.0210,
+  CYP2J2:  0.0193,
+  CYP4F2:  0.0150,
+  other:   0.0200,
+  // UGTs — Shen et al. 2016 DMPK; consensus ~0.0226 h⁻¹
+  UGT1A1:  0.0226,
+  UGT1A4:  0.0226,
+  UGT2B7:  0.0226,
+  UGT1A3:  0.0226,
+  UGT1A6:  0.0226,
+  UGT1A9:  0.0226,
+  UGT1A10: 0.0226,
+  UGT2B4:  0.0226,
+  UGT2B10: 0.0226,
+  UGT2B15: 0.0226,
+  UGT2B17: 0.0226,
 };
 
 const MECHANISM_OPTIONS = [
@@ -125,11 +189,27 @@ const RISK_LABEL: Record<DDIRiskLevel, string> = {
 // ---------------------------------------------------------------------------
 
 function blankSubstratePaths(): SubstratePathway[] {
-  return CYP_ENZYMES.map(e => ({ enzyme: e, fm: 0 }));
+  const all: DrugMetabolizingEnzyme[] = [
+    ...CYP_ENZYMES_PRIMARY,
+    ...CYP_ENZYMES_ADDITIONAL,
+    'other',
+    ...NON_CYP_PHASE1_ENZYMES,
+    ...UGT_ENZYMES,
+    ...PHASE2_OTHER_ENZYMES,
+  ];
+  return all.map(e => ({ enzyme: e, fm: 0 }));
 }
 
 function blankReversible(): ReversibleInhibitorData[] {
-  return CYP_ENZYMES.map(e => ({
+  const all: (DrugMetabolizingEnzyme)[] = [
+    ...CYP_ENZYMES_PRIMARY,
+    ...CYP_ENZYMES_ADDITIONAL,
+    'other',
+    ...NON_CYP_PHASE1_ENZYMES,
+    ...UGT_ENZYMES,
+    ...PHASE2_OTHER_ENZYMES,
+  ];
+  return all.map(e => ({
     enzyme: e,
     Ki: undefined,
     IC50: undefined,
@@ -140,17 +220,28 @@ function blankReversible(): ReversibleInhibitorData[] {
 }
 
 function blankTDI(): TDIData[] {
-  return CYP_ENZYMES.map(e => ({
+  // TDI primarily applies to CYPs and select UGTs
+  const tdiEnzymes: DrugMetabolizingEnzyme[] = [
+    ...CYP_ENZYMES_PRIMARY,
+    ...CYP_ENZYMES_ADDITIONAL,
+    'other',
+    ...UGT_TDI_ENZYMES,
+  ];
+  return tdiEnzymes.map(e => ({
     enzyme: e,
     kinact: 0,
     KI: 1,
     Iu_max: 0,
-    kdeg: HUMAN_KDEG[e],
+    kdeg: HUMAN_KDEG[e] ?? 0.02,
   }));
 }
 
 function blankInduction(): InductionData[] {
-  return INDUCTION_ENZYMES.map(e => ({
+  const indEnzymes: DrugMetabolizingEnzyme[] = [
+    ...CYP_INDUCTION_ENZYMES,
+    ...UGT_INDUCTION_ENZYMES,
+  ];
+  return indEnzymes.map(e => ({
     enzyme: e,
     Emax: 0,
     EC50: 1,
@@ -164,7 +255,7 @@ function blankTransporters(): TransporterInhibitionData[] {
     transporter: t,
     IC50: undefined,
     Ki: undefined,
-    Iu_gut: INTESTINAL_TRANSPORTERS.includes(t) ? undefined : undefined,
+    Iu_gut: undefined,
     Iu_systemic: undefined,
   }));
 }
@@ -173,6 +264,7 @@ function blankInputs(): DDIInputs {
   return {
     compound: { name: '' },
     substratePathways: blankSubstratePaths(),
+    mmKinetics: [],
     reversibleInhibitors: blankReversible(),
     tdiData: blankTDI(),
     induction: blankInduction(),
@@ -226,6 +318,7 @@ function sampleToInputs(sample: DDIInputs): DDIInputs {
   return {
     ...base,
     compound: sample.compound,
+    mmKinetics:        sample.mmKinetics ?? [],
     Cmax_total:        sample.Cmax_total,
     Cmax_unbound:      sample.Cmax_unbound,
     fup:               sample.fup,
@@ -302,108 +395,170 @@ function CellInput({ value, onChange, placeholder = '—', min, max, step = 'any
 }
 
 // ---------------------------------------------------------------------------
-// Tab A — Substrate Assessment
+// Tab A — Substrate Assessment (ICH M12 full enzyme scope)
 // ---------------------------------------------------------------------------
+
+// Enzyme group definitions for display grouping
+const SUBSTRATE_GROUPS: { label: string; color: string; enzymes: DrugMetabolizingEnzyme[] }[] = [
+  {
+    label: 'Primary CYP Enzymes',
+    color: 'bg-blue-50 text-blue-800',
+    enzymes: CYP_ENZYMES_PRIMARY,
+  },
+  {
+    label: 'Additional CYP Enzymes (ICH M12)',
+    color: 'bg-indigo-50 text-indigo-800',
+    enzymes: CYP_ENZYMES_ADDITIONAL,
+  },
+  {
+    label: 'Phase 1 Non-CYP Enzymes (ICH M12)',
+    color: 'bg-purple-50 text-purple-800',
+    enzymes: NON_CYP_PHASE1_ENZYMES,
+  },
+  {
+    label: 'UGT Enzymes — Phase 2 (ICH M12)',
+    color: 'bg-emerald-50 text-emerald-800',
+    enzymes: UGT_ENZYMES,
+  },
+  {
+    label: 'Other Phase 2 Enzymes (ICH M12)',
+    color: 'bg-slate-100 text-slate-700',
+    enzymes: PHASE2_OTHER_ENZYMES,
+  },
+  {
+    label: 'Other',
+    color: 'bg-slate-50 text-slate-600',
+    enzymes: ['other'],
+  },
+];
 
 interface SubstrateTabProps {
   pathways: SubstratePathway[];
+  mmKinetics: MMKineticsEntry[];
   onChange: (p: SubstratePathway[]) => void;
+  onMMChange: (entries: MMKineticsEntry[]) => void;
 }
 
-function SubstrateTab({ pathways, onChange }: SubstrateTabProps) {
+function SubstrateTab({ pathways, mmKinetics, onChange, onMMChange }: SubstrateTabProps) {
+  const [showMM, setShowMM] = React.useState(false);
+
   const totalFm = pathways.reduce((s, p) => s + (p.fm ?? 0), 0);
   const sumError = totalFm > 1.0001;
 
-  function updateFm(idx: number, v: number | undefined) {
-    const next = pathways.map((p, i) =>
-      i === idx ? { ...p, fm: v ?? 0 } : p,
-    );
+  function updateFm(enzyme: string, v: number | undefined) {
+    const next = pathways.map(p => String(p.enzyme) === enzyme ? { ...p, fm: v ?? 0 } : p);
     onChange(next);
   }
 
+  function addMMEntry() {
+    const newEntry: MMKineticsEntry = {
+      id: `mm-${Date.now()}`,
+      enzyme: '',
+      Km: 0,
+      Vmax: 0,
+      units: 'microsomes',
+    };
+    onMMChange([...mmKinetics, newEntry]);
+  }
+
+  function updateMMEntry(id: string, patch: Partial<MMKineticsEntry>) {
+    const updated = mmKinetics.map(e => e.id === id ? { ...e, ...patch } : e);
+    const derived = deriveMMCLint(updated);
+    onMMChange(derived);
+  }
+
+  function removeMMEntry(id: string) {
+    onMMChange(mmKinetics.filter(e => e.id !== id));
+  }
+
+  function renderEnzymeRow(p: SubstratePathway, rowIdx: number) {
+    const fm = p.fm ?? 0;
+    const aucrMax = fm >= 1 ? Infinity : fm > 0 ? 1 / (1 - fm) : 1;
+    const isSensitive = fm >= 0.8;
+    const isMajor     = fm >= 0.5;
+    const isModerate  = fm >= 0.25 && !isMajor;
+
+    const risk: DDIRiskLevel =
+      isSensitive ? 'high_risk'
+      : isMajor   ? 'risk'
+      : isModerate ? 'potential_risk'
+      : 'no_risk';
+
+    const label =
+      isSensitive  ? 'Sensitive substrate'
+      : isMajor    ? 'Major substrate'
+      : isModerate ? 'Moderate substrate'
+      : 'Minor substrate';
+
+    return (
+      <tr key={String(p.enzyme)} className={clsx('border-b border-slate-100 last:border-0', rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 text-xs">{String(p.enzyme)}</td>
+        <td className="px-3 py-1.5">
+          <CellInput value={fm === 0 ? undefined : fm} onChange={v => updateFm(String(p.enzyme), v)} placeholder="0" min={0} max={1} />
+        </td>
+        <td className={clsx('px-3 py-1.5 text-right font-mono text-xs', fm > 0 ? 'text-slate-800' : 'text-slate-300')}>
+          {fm > 0 ? (isFinite(aucrMax) ? aucrMax.toFixed(2) : '∞') : '—'}
+        </td>
+        <td className="px-3 py-1.5 text-center text-xs">
+          {isSensitive ? <span className="text-red-600 font-bold">✓</span> : <span className="text-slate-200">—</span>}
+        </td>
+        <td className="px-3 py-1.5 text-center text-xs">
+          {isMajor ? <span className="text-orange-500 font-bold">✓</span> : <span className="text-slate-200">—</span>}
+        </td>
+        <td className="px-3 py-1.5">
+          {fm > 0 ? <RiskBadge risk={risk} label={label} /> : <span className="text-slate-300 text-xs">—</span>}
+        </td>
+      </tr>
+    );
+  }
+
   return (
-    <div>
+    <div className="space-y-4">
       <SectionHeader
-        title="Substrate Pathway Assessment"
-        subtitle="Enter the fraction metabolised (fm) for each CYP enzyme. Values should sum to ≤ 1.0."
+        title="Substrate Pathway Assessment (ICH M12)"
+        subtitle="Enter fraction metabolised (fm) per enzyme. Values should sum to ≤ 1.0 across all pathways."
       />
 
       {sumError && (
-        <div className="mb-4 flex items-center gap-2 rounded-md bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-800">
+        <div className="flex items-center gap-2 rounded-md bg-orange-50 border border-orange-200 px-3 py-2 text-xs text-orange-800">
           <AlertTriangle className="h-4 w-4 shrink-0 text-orange-500" />
-          <span>
-            Sum of fm values = <strong>{totalFm.toFixed(3)}</strong> — exceeds 1.0. Ensure fractions are correct (other pathways
-            may account for the remainder).
-          </span>
+          <span>Sum of fm = <strong>{totalFm.toFixed(3)}</strong> — exceeds 1.0. Check fractions.</span>
         </div>
       )}
 
+      {/* Enzyme table with group headers */}
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-24">Enzyme</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-36">fm (0–1)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600">AUCR max</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600">Sensitive</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600">Major</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600">Classification</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Enzyme</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-36">fm (0–1)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600">AUCR max</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600">Sensitive</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600">Major</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600">Classification</th>
             </tr>
           </thead>
           <tbody>
-            {pathways.map((p, i) => {
-              const fm = p.fm ?? 0;
-              const aucrMax = fm >= 1 ? Infinity : fm > 0 ? 1 / (1 - fm) : 1;
-              const isSensitive = fm >= 0.8;
-              const isMajor     = fm >= 0.5;
-              const isModerate  = fm >= 0.25 && !isMajor;
-
-              const risk: DDIRiskLevel =
-                isSensitive    ? 'high_risk'
-                : isMajor      ? 'risk'
-                : isModerate   ? 'potential_risk'
-                : 'no_risk';
-
-              const label =
-                isSensitive  ? 'Sensitive substrate'
-                : isMajor    ? 'Major substrate'
-                : isModerate ? 'Moderate substrate'
-                : 'Minor substrate';
-
+            {SUBSTRATE_GROUPS.map(group => {
+              const groupPathways = pathways.filter(p => group.enzymes.includes(p.enzyme as DrugMetabolizingEnzyme));
               return (
-                <tr key={p.enzyme} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
-                  <td className="px-3 py-2 font-mono font-semibold text-slate-700">{p.enzyme}</td>
-                  <td className="px-3 py-2">
-                    <CellInput
-                      value={fm === 0 ? undefined : fm}
-                      onChange={v => updateFm(i, v)}
-                      placeholder="0"
-                      min={0}
-                      max={1}
-                    />
-                  </td>
-                  <td className={clsx('px-3 py-2 text-right font-mono', fm > 0 ? 'text-slate-800' : 'text-slate-400')}>
-                    {fm > 0 ? (isFinite(aucrMax) ? aucrMax.toFixed(2) : '∞') : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {isSensitive ? <span className="text-red-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {isMajor ? <span className="text-orange-500 font-bold">✓</span> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    {fm > 0 ? <RiskBadge risk={risk} label={label} /> : <span className="text-slate-300 text-xs">—</span>}
-                  </td>
-                </tr>
+                <React.Fragment key={group.label}>
+                  <tr>
+                    <td colSpan={6} className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', group.color)}>
+                      {group.label}
+                    </td>
+                  </tr>
+                  {groupPathways.map((p, i) => renderEnzymeRow(p, i))}
+                </React.Fragment>
               );
             })}
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-300 bg-slate-100">
-              <td className="px-3 py-2 font-semibold text-slate-600">Total</td>
-              <td className={clsx('px-3 py-2 font-mono font-bold', sumError ? 'text-orange-600' : 'text-slate-700')}>
-                {totalFm.toFixed(3)}
-                {sumError && ' ⚠'}
+              <td className="px-3 py-2 font-semibold text-slate-600 text-xs">Total fm</td>
+              <td className={clsx('px-3 py-2 font-mono font-bold text-xs', sumError ? 'text-orange-600' : 'text-slate-700')}>
+                {totalFm.toFixed(3)}{sumError && ' ⚠'}
               </td>
               <td colSpan={4} />
             </tr>
@@ -411,17 +566,146 @@ function SubstrateTab({ pathways, onChange }: SubstrateTabProps) {
         </table>
       </div>
 
-      <p className="mt-2 text-xs text-slate-400">
-        Thresholds: Sensitive ≥ fm 0.80 (AUCR ≥ 5), Major ≥ fm 0.50 (AUCR ≥ 2), Moderate fm 0.25–0.50 (AUCR 1.33–2).
-        FDA/EMA Guidance.
+      <p className="text-xs text-slate-400">
+        Sensitive substrate: fm ≥ 0.80 (AUCR ≥ 5); Major: fm ≥ 0.50 (AUCR ≥ 2); Moderate: fm 0.25–0.50 (AUCR 1.33–2).
+        ICH M12 (2024); FDA/EMA Guidance. All enzyme groups per ICH M12 Section 3.
       </p>
+
+      {/* ── MM Kinetics panel ── */}
+      <div className="rounded-lg border border-slate-200 bg-white">
+        <button
+          type="button"
+          onClick={() => setShowMM(v => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg transition-colors"
+        >
+          <span className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+            Michaelis-Menten Kinetics
+            <span className="text-slate-400 font-normal normal-case">— CLint = Vmax / Km</span>
+          </span>
+          <ChevronDown className={clsx('h-4 w-4 transition-transform', showMM && 'rotate-180')} />
+        </button>
+
+        {showMM && (
+          <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
+            <p className="text-xs text-slate-500">
+              Enter Km and Vmax for each enzyme from in-vitro assays.
+              CLint is derived automatically (corrected for substrate concentration if provided).
+              <br />
+              <strong>Formula:</strong> CLint = Vmax / (Km + [S]) µL/min/mg (microsomes) or µL/min/10⁶ cells (hepatocytes).
+              At [S] ≪ Km: CLint ≈ Vmax / Km.
+            </p>
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full text-xs min-w-[700px]">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600 w-32">Enzyme / Pathway</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600 w-24">Units</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Km (µM)</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600 w-32">Vmax (pmol/min/mg)</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">[S] assay (µM)</th>
+                    <th className="text-right px-3 py-2 font-semibold text-slate-600 w-32">CLint derived</th>
+                    <th className="text-left px-3 py-2 font-semibold text-slate-600">Notes</th>
+                    <th className="w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mmKinetics.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-3 py-4 text-center text-slate-400">
+                        No entries. Click <strong>+ Add enzyme</strong> to begin.
+                      </td>
+                    </tr>
+                  )}
+                  {mmKinetics.map((entry, i) => (
+                    <tr key={entry.id} className={clsx('border-b border-slate-100', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={entry.enzyme}
+                          onChange={e => updateMMEntry(entry.id, { enzyme: e.target.value })}
+                          placeholder="e.g. CYP3A4"
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <select
+                          value={entry.units}
+                          onChange={e => updateMMEntry(entry.id, { units: e.target.value as 'microsomes' | 'hepatocytes' })}
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none"
+                        >
+                          <option value="microsomes">Microsomes</option>
+                          <option value="hepatocytes">Hepatocytes</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <CellInput value={entry.Km || undefined} onChange={v => updateMMEntry(entry.id, { Km: v ?? 0 })} placeholder="—" min={0} />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <CellInput value={entry.Vmax || undefined} onChange={v => updateMMEntry(entry.id, { Vmax: v ?? 0 })} placeholder="—" min={0} />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <CellInput value={entry.substrate_conc} onChange={v => updateMMEntry(entry.id, { substrate_conc: v })} placeholder="≪ Km" min={0} />
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold">
+                        {entry.CLint_derived !== undefined ? (
+                          <span className="text-teal-700">{entry.CLint_derived.toFixed(3)}</span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={entry.notes ?? ''}
+                          onChange={e => updateMMEntry(entry.id, { notes: e.target.value })}
+                          placeholder="Optional note"
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => removeMMEntry(entry.id)}
+                          className="text-slate-400 hover:text-red-500 transition-colors"
+                          title="Remove row"
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <button
+              type="button"
+              onClick={addMMEntry}
+              className="flex items-center gap-1.5 text-xs text-amber-700 border border-amber-300 bg-amber-50 rounded px-3 py-1.5 hover:bg-amber-100 transition-colors"
+            >
+              + Add enzyme
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Tab B — Reversible Inhibition
+// Tab B — Reversible Inhibition (ICH M12 full enzyme scope)
 // ---------------------------------------------------------------------------
+
+// Group definitions for reversible inhibition (same enzyme groups as substrate)
+const REV_INH_GROUPS: { label: string; color: string; enzymes: DrugMetabolizingEnzyme[] }[] = [
+  { label: 'Primary CYP Enzymes',                 color: 'bg-blue-50 text-blue-800',    enzymes: CYP_ENZYMES_PRIMARY },
+  { label: 'Additional CYP Enzymes (ICH M12)',    color: 'bg-indigo-50 text-indigo-800', enzymes: CYP_ENZYMES_ADDITIONAL },
+  { label: 'Phase 1 Non-CYP Enzymes (ICH M12)',   color: 'bg-purple-50 text-purple-800', enzymes: NON_CYP_PHASE1_ENZYMES },
+  { label: 'UGT Enzymes — Phase 2 (ICH M12)',     color: 'bg-emerald-50 text-emerald-800', enzymes: UGT_ENZYMES },
+  { label: 'Other Phase 2 Enzymes (ICH M12)',     color: 'bg-slate-100 text-slate-700',  enzymes: PHASE2_OTHER_ENZYMES },
+  { label: 'Other',                               color: 'bg-slate-50 text-slate-600',   enzymes: ['other'] },
+];
 
 interface ReversibleTabProps {
   inhibitors: ReversibleInhibitorData[];
@@ -429,89 +713,97 @@ interface ReversibleTabProps {
 }
 
 function ReversibleTab({ inhibitors, onChange }: ReversibleTabProps) {
-  function update(idx: number, patch: Partial<ReversibleInhibitorData>) {
-    onChange(inhibitors.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  function update(enzyme: string, patch: Partial<ReversibleInhibitorData>) {
+    onChange(inhibitors.map(r => String(r.enzyme) === enzyme ? { ...r, ...patch } : r));
+  }
+
+  function renderRow(r: ReversibleInhibitorData, rowIdx: number) {
+    const Ki_eff = r.Ki !== undefined && r.Ki > 0
+      ? r.Ki
+      : r.IC50 !== undefined && r.IC50 > 0
+        ? r.IC50 / (r.IC50_to_Ki_ratio ?? 2)
+        : undefined;
+
+    const Iu = r.Iu_max ?? 0;
+    const R1 = Ki_eff !== undefined && Ki_eff > 0 ? 1 + Iu / Ki_eff : undefined;
+
+    const riskEMA: DDIRiskLevel | null = R1 !== undefined
+      ? R1 >= 1.02 * 2 ? 'risk' : R1 >= 1.02 ? 'potential_risk' : 'no_risk'
+      : null;
+    const riskFDA: DDIRiskLevel | null = R1 !== undefined
+      ? R1 >= 1.1 * 2 ? 'risk' : R1 >= 1.1 ? 'potential_risk' : 'no_risk'
+      : null;
+
+    const enz = String(r.enzyme);
+    return (
+      <tr key={enz} className={clsx('border-b border-slate-100 last:border-0', rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 text-xs">{enz}</td>
+        <td className="px-3 py-1.5">
+          <CellInput value={r.Ki} onChange={v => update(enz, { Ki: v })} placeholder="—" min={0} />
+        </td>
+        <td className="px-3 py-1.5">
+          <CellInput value={r.IC50} onChange={v => update(enz, { IC50: v })} placeholder="—" min={0} />
+        </td>
+        <td className="px-3 py-1.5">
+          <select
+            value={r.mechanism}
+            onChange={e => update(enz, { mechanism: e.target.value as ReversibleInhibitorData['mechanism'] })}
+            className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+          >
+            {MECHANISM_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </td>
+        <td className="px-3 py-1.5">
+          <CellInput value={r.Iu_max} onChange={v => update(enz, { Iu_max: v })} placeholder="—" min={0} />
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-xs text-slate-800">
+          {R1 !== undefined ? <span className={clsx(R1 >= 1.02 ? 'font-bold' : '')}>{R1.toFixed(3)}</span> : <span className="text-slate-300">—</span>}
+        </td>
+        <td className="px-3 py-1.5 text-center">
+          {riskEMA !== null ? <RiskBadge risk={riskEMA} /> : <span className="text-slate-300 text-xs">—</span>}
+        </td>
+        <td className="px-3 py-1.5 text-center">
+          {riskFDA !== null ? <RiskBadge risk={riskFDA} /> : <span className="text-slate-300 text-xs">—</span>}
+        </td>
+      </tr>
+    );
   }
 
   return (
     <div>
       <SectionHeader
-        title="Reversible CYP Inhibition — R1 Ratio"
-        subtitle="Enter Ki or IC50 (µM) and maximum unbound inhibitor concentration Iu_max (µM) for each CYP."
+        title="Reversible Inhibition — R1 Ratio (ICH M12)"
+        subtitle="Enter Ki or IC50 (µM) and Iu_max (µM) for each enzyme. R1 = 1 + Iu/Ki. ICH M12 covers CYPs, Phase 1 non-CYP, UGTs, and other Phase 2."
       />
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-20">Enzyme</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Ki (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">IC50 (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-32">Mechanism</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-20">R1</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-28">EMA (≥1.02)</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-28">FDA (≥1.1)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Enzyme</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Ki (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">IC50 (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-32">Mechanism</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-20">R1</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-28">EMA (≥1.02)</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-28">FDA (≥1.1)</th>
             </tr>
           </thead>
           <tbody>
-            {inhibitors.map((r, i) => {
-              const Ki_eff = r.Ki !== undefined && r.Ki > 0
-                ? r.Ki
-                : r.IC50 !== undefined && r.IC50 > 0
-                  ? r.IC50 / (r.IC50_to_Ki_ratio ?? 2)
-                  : undefined;
-
-              const Iu = r.Iu_max ?? 0;
-              const R1 = Ki_eff !== undefined && Ki_eff > 0 ? 1 + Iu / Ki_eff : undefined;
-
-              const riskEMA: DDIRiskLevel | null = R1 !== undefined
-                ? R1 >= 1.02 * 2 ? 'risk' : R1 >= 1.02 ? 'potential_risk' : 'no_risk'
-                : null;
-
-              const riskFDA: DDIRiskLevel | null = R1 !== undefined
-                ? R1 >= 1.1 * 2 ? 'risk' : R1 >= 1.1 ? 'potential_risk' : 'no_risk'
-                : null;
-
-              const hasData = r.Ki !== undefined || r.IC50 !== undefined || r.Iu_max !== undefined;
-
+            {REV_INH_GROUPS.map(group => {
+              const groupInhibitors = inhibitors.filter(r => group.enzymes.includes(r.enzyme as DrugMetabolizingEnzyme));
               return (
-                <tr key={r.enzyme} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
-                  <td className="px-3 py-2 font-mono font-semibold text-slate-700">{String(r.enzyme)}</td>
-                  <td className="px-3 py-2">
-                    <CellInput value={r.Ki} onChange={v => update(i, { Ki: v })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={r.IC50} onChange={v => update(i, { IC50: v })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={r.mechanism}
-                      onChange={e => update(i, { mechanism: e.target.value as ReversibleInhibitorData['mechanism'] })}
-                      className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    >
-                      {MECHANISM_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={r.Iu_max} onChange={v => update(i, { Iu_max: v })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-800">
-                    {R1 !== undefined ? (
-                      <span className={clsx(R1 >= 1.02 ? 'font-bold' : '')}>{R1.toFixed(3)}</span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {riskEMA !== null ? <RiskBadge risk={riskEMA} /> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {riskFDA !== null ? <RiskBadge risk={riskFDA} /> : <span className="text-slate-300">—</span>}
-                  </td>
-                </tr>
+                <React.Fragment key={group.label}>
+                  <tr>
+                    <td colSpan={8} className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', group.color)}>
+                      {group.label}
+                    </td>
+                  </tr>
+                  {groupInhibitors.map((r, i) => renderRow(r, i))}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -519,8 +811,8 @@ function ReversibleTab({ inhibitors, onChange }: ReversibleTabProps) {
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
-        R1 = 1 + Iu / Ki. If only IC50 provided, Ki ≈ IC50/2 (competitive).
-        EMA threshold R1 ≥ 1.02; FDA threshold R1 ≥ 1.1. Iu = maximum unbound inhibitor concentration.
+        R1 = 1 + Iu / Ki. If only IC50 provided, Ki ≈ IC50 / IC50_to_Ki (default 2, competitive).
+        EMA threshold R1 ≥ 1.02; FDA threshold R1 ≥ 1.1. ICH M12 (2024) Section 3.
       </p>
     </div>
   );
@@ -535,82 +827,95 @@ interface TDITabProps {
   onChange: (v: TDIData[]) => void;
 }
 
+// TDI enzyme groups (CYPs + select UGTs)
+const TDI_GROUPS: { label: string; color: string; enzymes: DrugMetabolizingEnzyme[] }[] = [
+  { label: 'Primary CYP Enzymes',              color: 'bg-blue-50 text-blue-800',      enzymes: CYP_ENZYMES_PRIMARY },
+  { label: 'Additional CYP Enzymes (ICH M12)', color: 'bg-indigo-50 text-indigo-800',  enzymes: CYP_ENZYMES_ADDITIONAL },
+  { label: 'UGTs — TDI-susceptible (ICH M12)', color: 'bg-emerald-50 text-emerald-800', enzymes: UGT_TDI_ENZYMES },
+  { label: 'Other',                            color: 'bg-slate-50 text-slate-600',    enzymes: ['other'] },
+];
+
 function TDITab({ data, onChange }: TDITabProps) {
-  function update(idx: number, patch: Partial<TDIData>) {
-    onChange(data.map((t, i) => i === idx ? { ...t, ...patch } : t));
+  function update(enzyme: string, patch: Partial<TDIData>) {
+    onChange(data.map(t => String(t.enzyme) === enzyme ? { ...t, ...patch } : t));
   }
 
   return (
     <div>
       <SectionHeader
-        title="Time-Dependent (Mechanism-Based) Inhibition — R2 Ratio"
-        subtitle="Enter kinact, KI, and Iu_max. kdeg is pre-filled from human physiology DB."
+        title="Time-Dependent (Mechanism-Based) Inhibition — R2 Ratio (ICH M12)"
+        subtitle="Enter kinact, KI, and Iu_max. kdeg is pre-filled from human physiology DB. Covers CYPs and UGT1A1/UGT2B7 per ICH M12."
       />
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-20">Enzyme</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">kinact (h⁻¹)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">KI (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">kdeg (h⁻¹)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-20">λ (h⁻¹)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-24">Rem. act. (%)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-16">R2</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-28">Risk (≥1.25)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Enzyme</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">kinact (h⁻¹)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">KI (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">kdeg (h⁻¹)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-20">λ (h⁻¹)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-24">Rem. act. (%)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-16">R2</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-28">Risk (≥1.25)</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((t, i) => {
-              const lambda = t.kinact > 0 && t.Iu_max > 0 && t.KI >= 0
-                ? (t.kinact * t.Iu_max) / (t.KI + t.Iu_max)
-                : 0;
-
-              const kdeg = t.kdeg > 0 ? t.kdeg : 0.0001;
-              const remaining = kdeg / (kdeg + lambda);
-              const R2 = 1 / remaining;
-
-              const hasData = t.kinact > 0 || t.Iu_max > 0;
-
-              const risk: DDIRiskLevel = !hasData ? 'no_risk'
-                : R2 >= 1.25 * 2 ? 'high_risk'
-                : R2 >= 1.25     ? 'risk'
-                : 'no_risk';
-
+            {TDI_GROUPS.map(group => {
+              const groupData = data.filter(t => group.enzymes.includes(t.enzyme as DrugMetabolizingEnzyme));
               return (
-                <tr key={t.enzyme} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
-                  <td className="px-3 py-2 font-mono font-semibold text-slate-700">{t.enzyme}</td>
-                  <td className="px-3 py-2">
-                    <CellInput value={t.kinact === 0 ? undefined : t.kinact} onChange={v => update(i, { kinact: v ?? 0 })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={t.KI} onChange={v => update(i, { KI: v ?? 1 })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={t.Iu_max === 0 ? undefined : t.Iu_max} onChange={v => update(i, { Iu_max: v ?? 0 })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={t.kdeg} onChange={v => update(i, { kdeg: v ?? HUMAN_KDEG[t.enzyme] })} min={0} step="0.0001" />
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-700">
-                    {hasData ? lambda.toExponential(3) : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-700">
-                    {hasData ? (remaining * 100).toFixed(1) + '%' : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono font-semibold">
-                    {hasData ? (
-                      <span className={R2 >= 1.25 ? 'text-orange-700' : 'text-slate-600'}>{R2.toFixed(3)}</span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {hasData ? <RiskBadge risk={risk} /> : <span className="text-slate-300">—</span>}
-                  </td>
-                </tr>
+                <React.Fragment key={group.label}>
+                  <tr>
+                    <td colSpan={9} className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', group.color)}>
+                      {group.label}
+                    </td>
+                  </tr>
+                  {groupData.map((t, i) => {
+                    const lambda = t.kinact > 0 && t.Iu_max > 0 && t.KI >= 0
+                      ? (t.kinact * t.Iu_max) / (t.KI + t.Iu_max)
+                      : 0;
+                    const kdeg = t.kdeg > 0 ? t.kdeg : 0.0001;
+                    const remaining = kdeg / (kdeg + lambda);
+                    const R2 = 1 / remaining;
+                    const hasData = t.kinact > 0 || t.Iu_max > 0;
+                    const risk: DDIRiskLevel = !hasData ? 'no_risk'
+                      : R2 >= 1.25 * 2 ? 'high_risk'
+                      : R2 >= 1.25     ? 'risk'
+                      : 'no_risk';
+                    const enz = String(t.enzyme);
+                    return (
+                      <tr key={enz} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+                        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 text-xs">{enz}</td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={t.kinact === 0 ? undefined : t.kinact} onChange={v => update(enz, { kinact: v ?? 0 })} placeholder="—" min={0} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={t.KI} onChange={v => update(enz, { KI: v ?? 1 })} placeholder="—" min={0} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={t.Iu_max === 0 ? undefined : t.Iu_max} onChange={v => update(enz, { Iu_max: v ?? 0 })} placeholder="—" min={0} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={t.kdeg} onChange={v => update(enz, { kdeg: v ?? (HUMAN_KDEG[enz] ?? 0.02) })} min={0} step="0.0001" />
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-xs text-slate-700">
+                          {hasData ? lambda.toExponential(3) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-xs text-slate-700">
+                          {hasData ? (remaining * 100).toFixed(1) + '%' : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-xs">
+                          {hasData ? <span className={R2 >= 1.25 ? 'text-orange-700' : 'text-slate-600'}>{R2.toFixed(3)}</span> : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-center">
+                          {hasData ? <RiskBadge risk={risk} /> : <span className="text-slate-300 text-xs">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -619,7 +924,8 @@ function TDITab({ data, onChange }: TDITabProps) {
 
       <p className="mt-2 text-xs text-slate-400">
         λ = kinact × Iu / (KI + Iu); R2 = (kdeg + λ) / kdeg; Rem. activity = kdeg / (kdeg + λ).
-        Risk threshold R2 ≥ 1.25 (FDA/EMA). kdeg values from human physiology DB (Yang et al. 2008).
+        Risk threshold R2 ≥ 1.25 (FDA/EMA). kdeg: CYPs from Yang et al. 2008; UGTs from Shen et al. 2016 (~0.0226 h⁻¹).
+        ICH M12 (2024) Section 3.
       </p>
     </div>
   );
@@ -629,73 +935,99 @@ function TDITab({ data, onChange }: TDITabProps) {
 // Tab D — Induction
 // ---------------------------------------------------------------------------
 
+// Induction enzyme groups
+const IND_GROUPS: { label: string; color: string; enzymes: DrugMetabolizingEnzyme[] }[] = [
+  {
+    label: 'CYP Enzymes (AhR/PXR/CAR — primary induction pathway)',
+    color: 'bg-blue-50 text-blue-800',
+    enzymes: CYP_INDUCTION_ENZYMES,
+  },
+  {
+    label: 'UGT Enzymes (AhR/PXR — ICH M12)',
+    color: 'bg-emerald-50 text-emerald-800',
+    enzymes: UGT_INDUCTION_ENZYMES,
+  },
+];
+
 interface InductionTabProps {
   data: InductionData[];
   onChange: (v: InductionData[]) => void;
 }
 
 function InductionTab({ data, onChange }: InductionTabProps) {
-  function update(idx: number, patch: Partial<InductionData>) {
-    onChange(data.map((d, i) => i === idx ? { ...d, ...patch } : d));
+  function update(enzyme: string, patch: Partial<InductionData>) {
+    onChange(data.map(d => String(d.enzyme) === enzyme ? { ...d, ...patch } : d));
+  }
+
+  function renderRow(d: InductionData, rowIdx: number) {
+    const Iu = d.Iu_max ?? 0;
+    const EC50 = d.EC50 > 0 ? d.EC50 : 1;
+    const fold = 1 + (d.Emax * Iu) / (EC50 + Iu);
+    const R3   = 1 + (d.Emax * Iu) / ((EC50 + Iu) * (d.d ?? 1));
+    const hasData = d.Emax > 0 || Iu > 0;
+    const risk: DDIRiskLevel = !hasData ? 'no_risk'
+      : fold >= 2 * 2.5 || (fold >= 2 && R3 >= 2) ? 'high_risk'
+      : fold >= 2 || R3 > 1.0 ? 'risk'
+      : R3 > 0.9 ? 'potential_risk'
+      : 'no_risk';
+    const enz = String(d.enzyme);
+    return (
+      <tr key={enz} className={clsx('border-b border-slate-100 last:border-0', rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 text-xs">{enz}</td>
+        <td className="px-3 py-1.5">
+          <CellInput value={d.Emax === 0 ? undefined : d.Emax} onChange={v => update(enz, { Emax: v ?? 0 })} placeholder="—" min={0} />
+        </td>
+        <td className="px-3 py-1.5">
+          <CellInput value={d.EC50} onChange={v => update(enz, { EC50: v ?? 1 })} placeholder="—" min={0} />
+        </td>
+        <td className="px-3 py-1.5">
+          <CellInput value={Iu === 0 ? undefined : Iu} onChange={v => update(enz, { Iu_max: v ?? 0 })} placeholder="—" min={0} />
+        </td>
+        <td className={clsx('px-3 py-1.5 text-right font-mono text-xs', hasData && fold >= 2 ? 'font-bold text-orange-700' : 'text-slate-600')}>
+          {hasData ? fold.toFixed(2) : <span className="text-slate-300">—</span>}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-xs text-slate-700">
+          {hasData ? R3.toFixed(3) : <span className="text-slate-300">—</span>}
+        </td>
+        <td className="px-3 py-1.5 text-center">
+          {hasData ? <RiskBadge risk={risk} /> : <span className="text-slate-300 text-xs">—</span>}
+        </td>
+      </tr>
+    );
   }
 
   return (
     <div>
       <SectionHeader
-        title="CYP Induction — Emax Model"
-        subtitle="Enter Emax (fold), EC50 (µM), and maximum unbound inducer concentration Iu_max (µM)."
+        title="CYP / UGT Induction — Emax Model (ICH M12)"
+        subtitle="Enter Emax (fold), EC50 (µM), and Iu_max (µM). Covers CYPs (AhR/PXR) and UGTs susceptible to nuclear-receptor-mediated induction per ICH M12."
       />
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-20">Enzyme</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Emax (fold)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">EC50 (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-24">Fold induction</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-16">R3</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-28">Risk (fold ≥ 2×)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Enzyme</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Emax (fold)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">EC50 (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Iu_max (µM)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-24">Fold induction</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-16">R3</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-28">Risk (fold ≥ 2)</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((d, i) => {
-              const Iu = d.Iu_max ?? 0;
-              const EC50 = d.EC50 > 0 ? d.EC50 : 1;
-              const fold = 1 + (d.Emax * Iu) / (EC50 + Iu);
-              const R3   = 1 + (d.Emax * Iu) / ((EC50 + Iu) * (d.d ?? 1));
-
-              const hasData = d.Emax > 0 || Iu > 0;
-
-              const risk: DDIRiskLevel = !hasData ? 'no_risk'
-                : fold >= 2 * 2.5 || (fold >= 2 && R3 >= 2) ? 'high_risk'
-                : fold >= 2 || R3 > 1.0 ? 'risk'
-                : R3 > 0.9 ? 'potential_risk'
-                : 'no_risk';
-
+            {IND_GROUPS.map(group => {
+              const groupData = data.filter(d => group.enzymes.includes(d.enzyme as DrugMetabolizingEnzyme));
               return (
-                <tr key={d.enzyme} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
-                  <td className="px-3 py-2 font-mono font-semibold text-slate-700">{d.enzyme}</td>
-                  <td className="px-3 py-2">
-                    <CellInput value={d.Emax === 0 ? undefined : d.Emax} onChange={v => update(i, { Emax: v ?? 0 })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={d.EC50} onChange={v => update(i, { EC50: v ?? 1 })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={Iu === 0 ? undefined : Iu} onChange={v => update(i, { Iu_max: v ?? 0 })} placeholder="—" min={0} />
-                  </td>
-                  <td className={clsx('px-3 py-2 text-right font-mono', hasData && fold >= 2 ? 'font-bold text-orange-700' : 'text-slate-600')}>
-                    {hasData ? fold.toFixed(2) : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-700">
-                    {hasData ? R3.toFixed(3) : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {hasData ? <RiskBadge risk={risk} /> : <span className="text-slate-300">—</span>}
-                  </td>
-                </tr>
+                <React.Fragment key={group.label}>
+                  <tr>
+                    <td colSpan={7} className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', group.color)}>
+                      {group.label}
+                    </td>
+                  </tr>
+                  {groupData.map((d, i) => renderRow(d, i))}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -703,8 +1035,9 @@ function InductionTab({ data, onChange }: InductionTabProps) {
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
-        Fold = 1 + (Emax × I) / (EC50 + I); R3 = 1 + (Emax × Iu) / ((EC50 + Iu) × d).
-        Risk if fold ≥ 2× (FDA) or R3 &gt; 1.0 (EMA). Engines: CYP1A2, CYP2B6, CYP3A4.
+        Fold = 1 + (Emax × Iu) / (EC50 + Iu); R3 = 1 + (Emax × Iu) / ((EC50 + Iu) × d).
+        Risk if fold ≥ 2× (FDA) or R3 &gt; 1.0 (EMA).
+        UGTs included per ICH M12 (2024): UGT1A1 (AhR/PXR), UGT1A4/UGT2B7 (PXR).
       </p>
     </div>
   );
@@ -719,29 +1052,44 @@ interface TransporterTabProps {
   onChange: (v: TransporterInhibitionData[]) => void;
 }
 
+// Transporter display config (threshold, metric label, R formula)
 const TRANSPORTER_THRESHOLDS_DISPLAY: Record<Transporter, { threshold: number; metric: string; label: string }> = {
-  'P-gp':     { threshold: 10,   metric: 'R = 1 + Igut/IC50',      label: 'Gut' },
-  'BCRP':     { threshold: 10,   metric: 'R = 1 + Igut/IC50',      label: 'Gut' },
-  'OATP1B1':  { threshold: 0.1,  metric: 'R = Iu_inlet/IC50',      label: 'Inlet' },
-  'OATP1B3':  { threshold: 0.1,  metric: 'R = Iu_inlet/IC50',      label: 'Inlet' },
-  'OAT1':     { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',       label: 'Sys.' },
-  'OAT3':     { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',       label: 'Sys.' },
-  'OCT2':     { threshold: 0.02, metric: 'R = Cmax_ub/IC50',       label: 'Sys.' },
-  'MATE1':    { threshold: 0.02, metric: 'R = Cmax_ub/IC50',       label: 'Sys.' },
-  'MATE2K':   { threshold: 0.02, metric: 'R = Cmax_ub/IC50',       label: 'Sys.' },
+  // Efflux
+  'P-gp':    { threshold: 10,   metric: 'R = 1 + Igut/IC50',  label: 'Gut' },
+  'BCRP':    { threshold: 10,   metric: 'R = 1 + Igut/IC50',  label: 'Gut' },
+  'MRP2':    { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  // Hepatic uptake
+  'OATP1B1': { threshold: 0.1,  metric: 'R = Iu_inlet/IC50',  label: 'Inlet' },
+  'OATP1B3': { threshold: 0.1,  metric: 'R = Iu_inlet/IC50',  label: 'Inlet' },
+  'OCT1':    { threshold: 0.1,  metric: 'R = Iu_inlet/IC50',  label: 'Inlet' },
+  'NTCP':    { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  // Renal
+  'OAT1':    { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  'OAT2':    { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  'OAT3':    { threshold: 0.1,  metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  'OCT2':    { threshold: 0.02, metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  'MATE1':   { threshold: 0.02, metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  'MATE2K':  { threshold: 0.02, metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
+  // Biliary / safety
+  'BSEP':    { threshold: 0.01, metric: 'R = Cmax_ub/IC50',   label: 'Sys.' },
 };
+
+// Transporter display groups (ICH M12 functional classification)
+const TRANSPORTER_GROUPS: { label: string; color: string; transporters: Transporter[] }[] = [
+  { label: 'Efflux Transporters',                color: 'bg-blue-50 text-blue-800',      transporters: TRANSPORTERS_EFFLUX },
+  { label: 'Hepatic Uptake Transporters',         color: 'bg-amber-50 text-amber-800',    transporters: TRANSPORTERS_HEPATIC },
+  { label: 'Renal Secretion Transporters',        color: 'bg-purple-50 text-purple-800',  transporters: TRANSPORTERS_RENAL },
+  { label: 'Biliary / Safety (DILI flag)',        color: 'bg-red-50 text-red-800',        transporters: TRANSPORTERS_BILIARY },
+];
 
 function computeTransporterR(t: Transporter, entry: TransporterInhibitionData): number | undefined {
   const ic50 = entry.IC50 ?? entry.Ki;
   if (!ic50 || ic50 <= 0) return undefined;
 
-  const isIntestinal = INTESTINAL_TRANSPORTERS.includes(t);
-  const isOATP = t === 'OATP1B1' || t === 'OATP1B3';
-
-  if (isIntestinal) {
+  if (INTESTINAL_TRANSPORTERS.includes(t)) {
     const I = entry.Iu_gut ?? entry.Iu_systemic ?? 0;
     return 1 + I / ic50;
-  } else if (isOATP) {
+  } else if (HEPATIC_INLET_TRANSPORTERS.includes(t)) {
     const I = entry.Iu_systemic ?? 0;
     return I / ic50;
   } else {
@@ -751,81 +1099,87 @@ function computeTransporterR(t: Transporter, entry: TransporterInhibitionData): 
 }
 
 function TransporterTab({ data, onChange }: TransporterTabProps) {
-  function update(idx: number, patch: Partial<TransporterInhibitionData>) {
-    onChange(data.map((d, i) => i === idx ? { ...d, ...patch } : d));
+  function update(transporter: Transporter, patch: Partial<TransporterInhibitionData>) {
+    onChange(data.map(d => d.transporter === transporter ? { ...d, ...patch } : d));
   }
 
   return (
     <div>
       <SectionHeader
-        title="Transporter Inhibition"
-        subtitle="Enter IC50 (µM) and relevant unbound concentrations for each transporter."
+        title="Transporter Inhibition (ICH M12)"
+        subtitle="Enter IC50 (µM) and unbound concentrations. ICH M12 covers efflux, hepatic uptake, renal, and biliary transporters."
       />
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-24">Transporter</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">IC50 (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Iu_systemic (µM)</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-28">Iu_gut (µM)</th>
-              <th className="text-right px-3 py-2.5 font-semibold text-slate-600 w-16">R</th>
-              <th className="text-left px-3 py-2.5 font-semibold text-slate-600 w-32">Metric</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-16">Threshold</th>
-              <th className="text-center px-3 py-2.5 font-semibold text-slate-600 w-28">Risk</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-24">Transporter</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">IC50 (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Iu_systemic (µM)</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-28">Iu_gut (µM)</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-600 w-16">R</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-600 w-32">Metric</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-16">Threshold</th>
+              <th className="text-center px-3 py-2 font-semibold text-slate-600 w-28">Risk</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((entry, i) => {
-              const t = entry.transporter;
-              const cfg = TRANSPORTER_THRESHOLDS_DISPLAY[t];
-              const R = computeTransporterR(t, entry);
-              const hasData = (entry.IC50 !== undefined || entry.Ki !== undefined);
-              const isIntestinal = INTESTINAL_TRANSPORTERS.includes(t);
-
-              let risk: DDIRiskLevel = 'no_risk';
-              if (R !== undefined && cfg) {
-                if (R >= cfg.threshold * 5)    risk = 'high_risk';
-                else if (R >= cfg.threshold)   risk = 'risk';
-                else if (R >= cfg.threshold * 0.5) risk = 'potential_risk';
-                else                           risk = 'no_risk';
-              }
-
+            {TRANSPORTER_GROUPS.map(group => {
+              const groupData = data.filter(d => group.transporters.includes(d.transporter));
               return (
-                <tr key={t} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
-                  <td className="px-3 py-2 font-mono font-semibold text-slate-700">{t}</td>
-                  <td className="px-3 py-2">
-                    <CellInput value={entry.IC50} onChange={v => update(i, { IC50: v })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput value={entry.Iu_systemic} onChange={v => update(i, { Iu_systemic: v })} placeholder="—" min={0} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <CellInput
-                      value={entry.Iu_gut}
-                      onChange={v => update(i, { Iu_gut: v })}
-                      placeholder={isIntestinal ? '—' : 'N/A'}
-                      min={0}
-                      className={!isIntestinal ? 'bg-slate-50 cursor-not-allowed text-slate-400' : ''}
-                    />
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono font-semibold">
-                    {R !== undefined ? (
-                      <span className={R >= (cfg?.threshold ?? 0.1) ? 'text-orange-700' : 'text-slate-700'}>{R.toFixed(4)}</span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-slate-500 font-mono">{cfg?.metric ?? '—'}</td>
-                  <td className="px-3 py-2 text-center font-mono text-slate-600">{cfg?.threshold ?? '—'}</td>
-                  <td className="px-3 py-2 text-center">
-                    {hasData && R !== undefined
-                      ? <RiskBadge risk={risk} />
-                      : <span className="text-slate-300">—</span>
+                <React.Fragment key={group.label}>
+                  <tr>
+                    <td colSpan={8} className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', group.color)}>
+                      {group.label}
+                    </td>
+                  </tr>
+                  {groupData.map((entry, i) => {
+                    const t = entry.transporter;
+                    const cfg = TRANSPORTER_THRESHOLDS_DISPLAY[t];
+                    const R = computeTransporterR(t, entry);
+                    const hasData = (entry.IC50 !== undefined || entry.Ki !== undefined);
+                    const isIntestinal = INTESTINAL_TRANSPORTERS.includes(t);
+
+                    let risk: DDIRiskLevel = 'no_risk';
+                    if (R !== undefined && cfg) {
+                      if (R >= cfg.threshold * 5)       risk = 'high_risk';
+                      else if (R >= cfg.threshold)      risk = 'risk';
+                      else if (R >= cfg.threshold * 0.5) risk = 'potential_risk';
                     }
-                  </td>
-                </tr>
+
+                    return (
+                      <tr key={t} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+                        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 text-xs">{t}</td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={entry.IC50} onChange={v => update(t, { IC50: v })} placeholder="—" min={0} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <CellInput value={entry.Iu_systemic} onChange={v => update(t, { Iu_systemic: v })} placeholder="—" min={0} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <CellInput
+                            value={entry.Iu_gut}
+                            onChange={v => update(t, { Iu_gut: v })}
+                            placeholder={isIntestinal ? '—' : 'N/A'}
+                            min={0}
+                            className={!isIntestinal ? 'bg-slate-50 cursor-not-allowed text-slate-400' : ''}
+                          />
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-xs">
+                          {R !== undefined ? (
+                            <span className={R >= (cfg?.threshold ?? 0.1) ? 'text-orange-700' : 'text-slate-700'}>{R.toFixed(4)}</span>
+                          ) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-slate-500 font-mono text-xs">{cfg?.metric ?? '—'}</td>
+                        <td className="px-3 py-1.5 text-center font-mono text-xs text-slate-600">{cfg?.threshold ?? '—'}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          {hasData && R !== undefined ? <RiskBadge risk={risk} /> : <span className="text-slate-300 text-xs">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -833,9 +1187,10 @@ function TransporterTab({ data, onChange }: TransporterTabProps) {
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
-        P-gp/BCRP (intestinal): R = 1 + Igut/IC50, threshold ≥ 10.
-        OATP1B1/1B3: R = Iu_inlet/IC50, threshold ≥ 0.1.
-        OAT1/3: threshold ≥ 0.1; OCT2/MATE1/2K: threshold ≥ 0.02. FDA/EMA (2020/2012).
+        Efflux (P-gp/BCRP): R = 1 + Igut/IC50 ≥ 10; MRP2: Cmax_u/IC50 ≥ 0.1.
+        Hepatic (OATP/OCT1): Iu_inlet/IC50 ≥ 0.1; NTCP: Cmax_u/IC50 ≥ 0.1.
+        Renal OAT1/2/3: ≥ 0.1; OCT2/MATE1/2K: ≥ 0.02. BSEP (DILI): ≥ 0.01.
+        ICH M12 (2024) Section 3.4; FDA (2020); EMA (2012).
       </p>
     </div>
   );
@@ -845,7 +1200,7 @@ function TransporterTab({ data, onChange }: TransporterTabProps) {
 // Tab F — Mechanistic Static Models
 // ---------------------------------------------------------------------------
 
-const MSM_DEFAULT_ENZYMES: CYPEnzyme[] = ['CYP3A4', 'CYP2D6', 'CYP1A2', 'CYP2C9'];
+const MSM_DEFAULT_ENZYMES: DrugMetabolizingEnzyme[] = ['CYP3A4', 'CYP2D6', 'CYP1A2', 'CYP2C9'];
 
 function defaultMsmEnzymeInputs(): MechanisticStaticEnzymeInputs[] {
   return MSM_DEFAULT_ENZYMES.map(enzyme => ({
@@ -854,7 +1209,7 @@ function defaultMsmEnzymeInputs(): MechanisticStaticEnzymeInputs[] {
     useReversible: false,
     useTDI: false,
     useInduction: false,
-    kdeg: HUMAN_KDEG[enzyme],
+    kdeg: HUMAN_KDEG[enzyme] ?? 0.02,
   }));
 }
 
@@ -1184,7 +1539,7 @@ function MechanisticStaticTab({
                                   <label className="text-slate-500 font-medium">kdeg (h⁻¹)</label>
                                   <CellInput
                                     value={enz.kdeg}
-                                    onChange={v => updateEnzyme(idx, { kdeg: v ?? HUMAN_KDEG[enz.enzyme] })}
+                                    onChange={v => updateEnzyme(idx, { kdeg: v ?? (HUMAN_KDEG[enz.enzyme] ?? 0.02) })}
                                     min={0}
                                     step="0.0001"
                                   />
@@ -2447,7 +2802,9 @@ export default function DDIModule() {
                 {activeTab === 'substrate' && (
                   <SubstrateTab
                     pathways={inputs.substratePathways}
+                    mmKinetics={inputs.mmKinetics}
                     onChange={v => setInputs({ substratePathways: v })}
+                    onMMChange={v => setInputs({ mmKinetics: v })}
                   />
                 )}
                 {activeTab === 'reversible' && (
