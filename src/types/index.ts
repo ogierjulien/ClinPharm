@@ -474,6 +474,117 @@ export interface RiskMatrixEntry {
 export type DDISessionResult = SessionResult<DDIInputs, DDIResults>;
 
 // ---------------------------------------------------------------------------
+// DDI TAB F — MECHANISTIC STATIC MODEL TYPES
+// ---------------------------------------------------------------------------
+
+export interface MechanisticStaticEnzymeInputs {
+  enzyme: CYPEnzyme;
+  fm: number;                  // fraction metabolized by this enzyme (for AUCR)
+  // Reversible inhibition
+  useReversible: boolean;
+  Ki_rev?: number;             // µM unbound
+  Iu_rev?: number;             // µM (systemic unbound or hepatic inlet)
+  // TDI
+  useTDI: boolean;
+  kinact?: number;             // h⁻¹
+  KI_tdi?: number;             // µM
+  Iu_tdi?: number;             // µM
+  kdeg: number;                // h⁻¹ from physiology DB
+  // Induction
+  useInduction: boolean;
+  Emax?: number;               // fold
+  EC50_ind?: number;           // µM
+  Iu_ind?: number;             // µM
+}
+
+export interface MechanisticStaticIntermediate {
+  // Reversible
+  R_rev?: number;              // 1 + Iu/Ki
+  activity_rev?: number;       // 1/R_rev = Ki/(Ki+Iu)
+  // TDI
+  lambda?: number;             // kinact × Iu/(KI + Iu)
+  R_TDI?: number;              // (kdeg + λ)/kdeg
+  activity_TDI?: number;       // 1/R_TDI
+  // Induction
+  fold_induction?: number;     // 1 + Emax × Iu/(EC50 + Iu)
+  // Combined
+  net_activity_ratio: number;  // fold_ind / (R_rev × R_TDI)
+  AUCR?: number;               // 1/[fm × (1/net) + (1-fm)]
+}
+
+export interface MechanisticStaticEnzymeResult {
+  enzyme: CYPEnzyme;
+  intermediates: MechanisticStaticIntermediate;
+  risk: DDIRiskLevel;
+  riskLabel: string;
+  warnings: Warning[];
+}
+
+export interface MechanisticStaticInputs {
+  compound: CompoundMetadata;
+  template: 'FDA_2020' | 'EMA_2012' | 'custom';
+  enzymes: MechanisticStaticEnzymeInputs[];
+}
+
+export interface MechanisticStaticResults {
+  enzymeResults: MechanisticStaticEnzymeResult[];
+  overallRisk: DDIRiskLevel;
+  warnings: Warning[];
+}
+
+// ---------------------------------------------------------------------------
+// BATCH IVIVE TYPES
+// ---------------------------------------------------------------------------
+
+export interface BatchIVIVERecord {
+  compound_name: string;
+  CLint_app: number;
+  CLint_source: IVIVEDataSource;
+  fup: number;
+  fumic?: number;
+  fuhep?: number;
+  BP_ratio: number;
+  apply_fumic_correction: boolean;
+  observed_CLh?: number;
+  comments?: string;
+}
+
+export interface BatchIVIVEResult {
+  compound_name: string;
+  inputs: BatchIVIVERecord;
+  results: IVIVEResults;
+  warnings: Warning[];
+}
+
+// ---------------------------------------------------------------------------
+// BATCH DDI TYPES
+// ---------------------------------------------------------------------------
+
+export interface BatchDDIRecord {
+  compound_name: string;
+  enzyme_or_transporter: string;
+  pathway_type: 'substrate' | 'reversible_inhibitor' | 'TDI' | 'inducer' | 'transporter_inhibitor';
+  fm?: number;
+  Ki?: number;
+  IC50?: number;
+  kinact?: number;
+  KI?: number;
+  Emax?: number;
+  EC50?: number;
+  concentration_metric_type?: string;
+  concentration_value?: number;
+  unbound_fraction?: number;
+  comments?: string;
+}
+
+export interface BatchDDIResult {
+  compound_name: string;
+  inputs: BatchDDIRecord[];
+  results: DDIResults;
+  warnings: Warning[];
+}
+
+// ---------------------------------------------------------------------------
 // MODULE 4 — REPORTING TYPES
 // ---------------------------------------------------------------------------
 

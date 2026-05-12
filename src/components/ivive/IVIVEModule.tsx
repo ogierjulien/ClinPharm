@@ -3,7 +3,7 @@
 // Full 3-panel UI: inputs | equations+models | results+plots
 // =============================================================================
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Switch from '@radix-ui/react-switch';
 import {
@@ -12,6 +12,8 @@ import {
   RotateCcw,
   Save,
   Download,
+  Upload,
+  FileDown,
   ChevronDown,
   ChevronUp,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   BarChart2,
   Table2,
   Sliders,
+  X,
 } from 'lucide-react';
 import clsx from 'clsx';
 // @ts-ignore — react-plotly.js has no bundled TS declarations
@@ -32,17 +35,21 @@ import type {
   IVIVEResults,
   IVIVESpeciesResult,
   IVIVEModelOutput,
+  BatchIVIVERecord,
+  BatchIVIVEResult,
   Species,
   Warning,
 } from '@/types';
 
 import { runIVIVE } from '@/engine/ivive';
+import { runBatchIVIVE } from '@/engine/ivive/batch';
 import { IVIVE_MODEL_CONFIGS } from '@/engine/ivive/models';
 import { useAppStore } from '@/store';
 import { PHYSIOLOGY_DB } from '@/data/physiology';
 import { IVIVE_SAMPLE } from '@/data/samples';
 import { createRunMetadata } from '@/utils/session';
 import { exportJSON, exportCSV, formatNumber } from '@/utils/export';
+import { parseFile, iviveCompoundCSVTemplate, parseIVIVECompoundCSV } from '@/utils/csvImport';
 import {
   WarningBox,
   EquationPanel,
@@ -189,6 +196,81 @@ function buildDefaultInputs(): IVIVEInputs {
     modelsSelected: ['well_stirred_no_binding', 'well_stirred_with_binding', 'parallel_tube'],
     CLint_units: 'µL/min/mg',
   };
+}
+
+// ---------------------------------------------------------------------------
+// Batch import helpers
+// ---------------------------------------------------------------------------
+
+function validateBatchRecords(records: BatchIVIVERecord[]): string[] {
+  const errors: string[] = [];
+  records.forEach((rec, i) => {
+    const rowNum = i + 2; // +2: 1-based + header row
+    if (!(rec.CLint_app > 0)) {
+      errors.push(`Row ${rowNum}: CLint_app must be > 0`);
+    }
+    if (!(rec.fup > 0 && rec.fup <= 1)) {
+      errors.push(`Row ${rowNum}: fup must be between 0 and 1 (exclusive)`);
+    }
+    if (!(rec.BP_ratio > 0)) {
+      errors.push(`Row ${rowNum}: blood_to_plasma_ratio must be > 0`);
+    }
+    if (rec.CLint_source !== 'microsomes' && rec.CLint_source !== 'hepatocytes') {
+      errors.push(`Row ${rowNum}: matrix_type must be 'microsomes' or 'hepatocytes'`);
+    }
+  });
+  return errors;
+}
+
+function downloadCSV(content: string, filename: string): void {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildExportInputsCSV(compound: IVIVECompoundInputs): string {
+  const headers =
+    'compound_name,matrix_type,CLint_app,CLint_unit,fup,fumic,fuhep,blood_to_plasma_ratio,apply_fumic_correction,observed_CLh,comments';
+  const clintUnit =
+    compound.CLint_source === 'microsomes' ? 'uL/min/mg' : 'uL/min/1e6cells';
+  const row = [
+    compound.compound.name,
+    compound.CLint_source,
+    compound.CLint_app,
+    clintUnit,
+    compound.fup,
+    compound.fumic ?? '',
+    compound.fuhep ?? '',
+    compound.BP_ratio,
+    compound.apply_fumic_correction ? 'true' : 'false',
+    compound.observed_CLh ?? '',
+    '',
+  ].join(',');
+  return [headers, row].join('\n');
+}
+
+function buildBatchResultsCSV(batchResults: BatchIVIVEResult[]): string {
+  const wsModel: IVIVEModel = 'well_stirred_no_binding';
+  const headers =
+    'compound_name,CLint_app,CLint_source,fup,BP_ratio,human_CLh_well_stirred_mL_min,human_Eh_well_stirred';
+  const rows = batchResults.map(r => {
+    const humanSr = r.results.speciesResults.find(sr => sr.species === 'human');
+    const mo = humanSr?.modelOutputs.find(m => m.model === wsModel);
+    return [
+      r.compound_name,
+      r.inputs.CLint_app,
+      r.inputs.CLint_source,
+      r.inputs.fup,
+      r.inputs.BP_ratio,
+      mo ? formatNumber(mo.CLh_predicted) : '',
+      mo ? formatNumber(mo.Eh, 3) : '',
+    ].join(',');
+  });
+  return [headers, ...rows].join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -871,6 +953,14 @@ export default function IVIVEModule() {
   const [results, setResults] = useState<IVIVEResults | null>(null);
   const [activeTab, setActiveTab] = useState<'table' | 'plots' | 'sensitivity'>('table');
   const [showEquations, setShowEquations] = useState(false);
+
+  // Batch state
+  const [batchRecords, setBatchRecords] = useState<BatchIVIVERecord[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchIVIVEResult[]>([]);
+  const [selectedBatchCompound, setSelectedBatchCompound] = useState<string | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Collect all warnings from results
   const allWarnings: Warning[] = useMemo(() => {

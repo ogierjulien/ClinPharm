@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import * as Tabs from '@radix-ui/react-tabs';
 import { Play, RotateCcw, Save, BookOpen, Settings2, TrendingUp } from 'lucide-react';
 import type { AllometryInputs, AllometryMethod, AnimalDataPoint, AllometryResults as AllometryResultsType } from '@/types';
 import { useAppStore } from '@/store';
@@ -163,115 +164,29 @@ export default function AllometryModule() {
         </div>
       )}
 
-      {/* Main 3-column layout */}
-      <div className="max-w-screen-2xl mx-auto p-4 grid grid-cols-12 gap-4">
-
-        {/* LEFT — Inputs */}
-        <div className="col-span-12 xl:col-span-3 space-y-4">
-          <div className="bg-white rounded-lg border border-slate-200 p-4">
-            <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Compound</h3>
-            <div className="space-y-2">
-              <div>
-                <label className="block text-xs text-slate-500 mb-0.5">Compound name</label>
-                <input
-                  type="text"
-                  value={inputs.compound.name}
-                  onChange={e => setInputs(p => ({ ...p, compound: { ...p.compound, name: e.target.value } }))}
-                  className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400"
-                  placeholder="e.g. Compound A"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-slate-500 mb-0.5">Human BW (kg)</label>
-                  <input
-                    type="number"
-                    value={inputs.humanBodyWeight_kg}
-                    min={10} max={200} step={1}
-                    onChange={e => setInputs(p => ({ ...p, humanBodyWeight_kg: parseFloat(e.target.value) }))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-0.5">Human fup</label>
-                  <input
-                    type="number"
-                    value={inputs.humanFup ?? ''}
-                    step={0.01} min={0} max={1}
-                    placeholder="0.08"
-                    onChange={e => setInputs(p => ({ ...p, humanFup: e.target.value === '' ? undefined : parseFloat(e.target.value) }))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
-                  />
-                </div>
-              </div>
-              {(showBrainWeight || showMLP) && (
-                <div className="grid grid-cols-2 gap-2">
-                  {showBrainWeight && (
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-0.5">Human BrW (g)</label>
-                      <input
-                        type="number"
-                        value={inputs.humanBrainWeight_g ?? HUMAN_DEFAULTS.brainWeight_g}
-                        step={10}
-                        onChange={e => setInputs(p => ({ ...p, humanBrainWeight_g: parseFloat(e.target.value) }))}
-                        className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
-                      />
-                    </div>
-                  )}
-                  {showMLP && (
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-0.5">Human MLP (yr)</label>
-                      <input
-                        type="number"
-                        value={inputs.humanMLP_years ?? HUMAN_DEFAULTS.MLP_years}
-                        step={1}
-                        onChange={e => setInputs(p => ({ ...p, humanMLP_years: parseFloat(e.target.value) }))}
-                        className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-slate-200 p-4">
-            <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Prediction Options</h3>
-            <div className="space-y-1.5">
-              {[
-                { key: 'predictCL' as const, label: 'Predict CL' },
-                { key: 'predictVss' as const, label: 'Predict Vss' },
-                { key: 'predictHalfLife' as const, label: 'Predict t½ = 0.693×Vss/CL' },
-              ].map(({ key, label }) => (
-                <label key={key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={inputs[key]}
-                    onChange={e => setInputs(p => ({ ...p, [key]: e.target.checked }))}
-                    className="accent-indigo-600"
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-slate-200 p-4 overflow-y-auto max-h-[600px]">
-            <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1">
-              <Settings2 size={12} /> Allometric Methods
-            </h3>
-            <MethodSelector
-              selected={inputs.methodsSelected}
-              onChange={updateMethods}
-              availableFup={hasFup || (inputs.humanFup !== undefined)}
-              availableBrainWeight={hasBrainWeight}
-              availableMLP={hasMLP}
-            />
-          </div>
+      {/* 2-tab layout */}
+      <Tabs.Root defaultValue="data" className="max-w-screen-2xl mx-auto">
+        {/* Tab list */}
+        <div className="bg-white border-b border-slate-200 px-4">
+          <Tabs.List className="flex gap-0" aria-label="Allometry sections">
+            <Tabs.Trigger
+              value="data"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-indigo-700 data-[state=active]:border-indigo-600 focus:outline-none"
+            >
+              Data &amp; Methods
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="plots"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-indigo-700 data-[state=active]:border-indigo-600 focus:outline-none"
+            >
+              Plots
+            </Tabs.Trigger>
+          </Tabs.List>
         </div>
 
-        {/* MIDDLE — Data + Results */}
-        <div className="col-span-12 xl:col-span-4 space-y-4">
+        {/* Tab: Data & Methods */}
+        <Tabs.Content value="data" className="p-4 space-y-4 focus:outline-none">
+          {/* Full-width animal data table */}
           <div className="bg-white rounded-lg border border-slate-200 p-4">
             <SpeciesInputTable
               data={inputs.animalData}
@@ -281,6 +196,129 @@ export default function AllometryModule() {
             />
           </div>
 
+          {/* 2-column grid: settings left, results right */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {/* Left column: compound + options + methods */}
+            <div className="space-y-4">
+              <div className="bg-white rounded-lg border border-slate-200 p-4">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Compound</h3>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-0.5">Compound name</label>
+                    <input
+                      type="text"
+                      value={inputs.compound.name}
+                      onChange={e => setInputs(p => ({ ...p, compound: { ...p.compound, name: e.target.value } }))}
+                      className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400"
+                      placeholder="e.g. Compound A"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-0.5">Human BW (kg)</label>
+                      <input
+                        type="number"
+                        value={inputs.humanBodyWeight_kg}
+                        min={10} max={200} step={1}
+                        onChange={e => setInputs(p => ({ ...p, humanBodyWeight_kg: parseFloat(e.target.value) }))}
+                        className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-0.5">Human fup</label>
+                      <input
+                        type="number"
+                        value={inputs.humanFup ?? ''}
+                        step={0.01} min={0} max={1}
+                        placeholder="0.08"
+                        onChange={e => setInputs(p => ({ ...p, humanFup: e.target.value === '' ? undefined : parseFloat(e.target.value) }))}
+                        className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                  </div>
+                  {(showBrainWeight || showMLP) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {showBrainWeight && (
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-0.5">Human BrW (g)</label>
+                          <input
+                            type="number"
+                            value={inputs.humanBrainWeight_g ?? HUMAN_DEFAULTS.brainWeight_g}
+                            step={10}
+                            onChange={e => setInputs(p => ({ ...p, humanBrainWeight_g: parseFloat(e.target.value) }))}
+                            className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                      )}
+                      {showMLP && (
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-0.5">Human MLP (yr)</label>
+                          <input
+                            type="number"
+                            value={inputs.humanMLP_years ?? HUMAN_DEFAULTS.MLP_years}
+                            step={1}
+                            onChange={e => setInputs(p => ({ ...p, humanMLP_years: parseFloat(e.target.value) }))}
+                            className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-slate-200 p-4">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Prediction Options</h3>
+                <div className="space-y-1.5">
+                  {[
+                    { key: 'predictCL' as const, label: 'Predict CL' },
+                    { key: 'predictVss' as const, label: 'Predict Vss' },
+                    { key: 'predictHalfLife' as const, label: 'Predict t½ = 0.693×Vss/CL' },
+                  ].map(({ key, label }) => (
+                    <label key={key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={inputs[key]}
+                        onChange={e => setInputs(p => ({ ...p, [key]: e.target.checked }))}
+                        className="accent-indigo-600"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-slate-200 p-4 overflow-y-auto max-h-[600px]">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1">
+                  <Settings2 size={12} /> Allometric Methods
+                </h3>
+                <MethodSelector
+                  selected={inputs.methodsSelected}
+                  onChange={updateMethods}
+                  availableFup={hasFup || (inputs.humanFup !== undefined)}
+                  availableBrainWeight={hasBrainWeight}
+                  availableMLP={hasMLP}
+                />
+              </div>
+            </div>
+
+            {/* Right column: results panel (only when available) */}
+            <div>
+              {results ? (
+                <div className="bg-white rounded-lg border border-slate-200 p-4">
+                  <AllometryResultsPanel results={results} inputs={inputs} />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-slate-400 bg-white rounded-lg border border-dashed border-slate-300">
+                  <TrendingUp size={36} className="mb-2 text-slate-300" />
+                  <p className="text-sm font-medium">Results will appear here</p>
+                  <p className="text-xs mt-1">Click <strong>Run Analysis</strong> to get predictions</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Warnings and errors below */}
           {results && results.warnings.length > 0 && (
             <WarningBox warnings={results.warnings} title="Analysis Warnings" />
           )}
@@ -290,17 +328,11 @@ export default function AllometryModule() {
               <strong>Error:</strong> {error}
             </div>
           )}
+        </Tabs.Content>
 
-          {results && (
-            <div className="bg-white rounded-lg border border-slate-200 p-4">
-              <AllometryResultsPanel results={results} inputs={inputs} />
-            </div>
-          )}
-        </div>
-
-        {/* RIGHT — Plots */}
-        <div className="col-span-12 xl:col-span-5">
-          <div className="bg-white rounded-lg border border-slate-200 p-4 sticky top-4">
+        {/* Tab: Plots */}
+        <Tabs.Content value="plots" className="p-4 focus:outline-none">
+          <div className="bg-white rounded-lg border border-slate-200 p-4">
             {results ? (
               <AllometryPlots
                 inputs={inputs}
@@ -316,8 +348,8 @@ export default function AllometryModule() {
               </div>
             )}
           </div>
-        </div>
-      </div>
+        </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }

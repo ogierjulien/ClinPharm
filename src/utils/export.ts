@@ -239,6 +239,232 @@ export function formatFoldError(fe: number | undefined): string {
   return `${val.toFixed(2)}× ${dir}`;
 }
 
+// ---------------------------------------------------------------------------
+// Allometry equations reference data
+// ---------------------------------------------------------------------------
+
+interface AllometryEquationEntry {
+  method: string;
+  equation: string;
+  linearized: string;
+  keyVariables: string;
+  assumptions: string;
+  reference: string;
+}
+
+const ALLOMETRY_EQUATION_TABLE: AllometryEquationEntry[] = [
+  {
+    method: 'Simple Allometry',
+    equation: 'P = a × BW^b',
+    linearized: 'ln(P) = ln(a) + b × ln(BW)',
+    keyVariables: 'P = PK parameter; BW = body weight; a = coefficient; b = exponent',
+    assumptions: 'Elimination pathway conserved across species; no protein binding differences; linear PK',
+    reference: 'Boxenbaum (1982); Mahmood & Balian (1996)',
+  },
+  {
+    method: 'Unbound Fraction Correction',
+    equation: 'CLu_i = CL_i / fup_i; CLu = a × BW^b; CL_human = CLu_human × fup_human',
+    linearized: 'ln(CLu) = ln(a) + b × ln(BW)',
+    keyVariables: 'CLu = unbound CL; fup = unbound plasma fraction',
+    assumptions: 'Unbound CL is more conserved across species than total CL; protein binding is primary variability source',
+    reference: 'Bachmann et al. (1996)',
+  },
+  {
+    method: 'Brain Weight Correction',
+    equation: 'Corrected_CL_i = CL_i × BW_i / BrW_i; CL_human = a × BW_human^b × BrW_human / BW_human',
+    linearized: 'ln(Corrected_CL) = ln(a) + b × ln(BW)',
+    keyVariables: 'BrW = brain weight (g)',
+    assumptions: 'Brain weight is a proxy for CNS-mediated metabolic activity',
+    reference: 'Boxenbaum (1982) J Pharmacokinet Biopharm 10:201',
+  },
+  {
+    method: 'MLP Correction',
+    equation: 'Corrected_CL_i = CL_i × MLP_i; CL_human = (a × BW_human^b) / MLP_human',
+    linearized: 'ln(Corrected_CL) = ln(a) + b × ln(BW)',
+    keyVariables: 'MLP = maximum life potential (years)',
+    assumptions: 'MLP reflects species differences in metabolic rate and longevity; best for oxidatively eliminated drugs',
+    reference: 'Boxenbaum (1982) J Pharmacokinet Biopharm 10:201',
+  },
+  {
+    method: 'Rule of Exponent',
+    equation: 'b < 0.55 → simple; 0.55 ≤ b < 0.70 → simple with caution; 0.70 ≤ b < 1.0 → MLP/brain weight; b ≥ 1.0 → strong correction',
+    linearized: 'Uses simple allometry to determine b, then applies appropriate method',
+    keyVariables: 'b = allometric exponent from simple allometry',
+    assumptions: 'Allometric exponent guides method selection',
+    reference: 'Mahmood & Balian (1996) J Pharm Sci 85:103',
+  },
+  {
+    method: 'Caldwell–Tang Variant 1 (MLP + fup)',
+    equation: 'CLcorr_i = (CL_i × MLP_i) / fup_i; CL_human = (a × BW_human^b × fup_human) / MLP_human',
+    linearized: 'ln(CLcorr) = ln(a) + b × ln(BW)',
+    keyVariables: 'MLP = maximum life potential; fup = unbound fraction',
+    assumptions: 'Combined effect of MLP and protein binding drives inter-species CL variability',
+    reference: 'Caldwell et al. (2004) J Pharm Sci 93:2222',
+  },
+  {
+    method: 'Caldwell–Tang Variant 2 (Brain weight + fup)',
+    equation: 'CLcorr_i = (CL_i × BW_i × fup_human) / (BrW_i × fup_i); CL_human = a × BW_human^b × BrW_human / BW_human',
+    linearized: 'ln(CLcorr) = ln(a) + b × ln(BW)',
+    keyVariables: 'BrW = brain weight; fup = unbound fraction',
+    assumptions: 'Combined brain weight and unbound fraction correction provides best human CL estimate',
+    reference: 'Tang et al. (2007) Drug Metab Dispos 35:1886',
+  },
+  {
+    method: 'Caldwell–Tang Variant 3 (MPPGL Correction)',
+    equation: 'CLcorr_i = CL_i × (MPPGL_human / MPPGL_i); CL_human = a × BW_human^b',
+    linearized: 'ln(CLcorr) = ln(a) + b × ln(BW)',
+    keyVariables: 'MPPGL = microsomal protein per gram liver',
+    assumptions: 'Microsomal protein content normalizes metabolic capacity differences',
+    reference: 'Caldwell et al. (2004); Houston (1994)',
+  },
+  {
+    method: 'Liver Blood Flow Normalization',
+    equation: 'Normalized_CL_i = CL_i / Qh_i; CL_human = predicted × Qh_human',
+    linearized: 'ln(Normalized_CL) = ln(a) + b × ln(BW)',
+    keyVariables: 'Qh = hepatic blood flow (mL/min)',
+    assumptions: 'Qh scales allometrically; CL/Qh ratio (extraction ratio) relatively conserved across species',
+    reference: 'Lave et al. (1997) J Pharm Sci 86:584',
+  },
+  {
+    method: 'Species-Invariant Time (Dedrick)',
+    equation: 'T* = t / BW^(1-b); CL_normalized = CL / BW^b',
+    linearized: 'Dedrick transform collapses multi-species PK data onto single curve',
+    keyVariables: 'T* = species-invariant (Dedrick) time; b = allometric exponent',
+    assumptions: 'PK time course is self-similar across species when time is scaled by BW^(1-b)',
+    reference: 'Dedrick (1972) Cancer Chemother Rep 56:441',
+  },
+  {
+    method: 'Fixed Exponent (b = 0.75)',
+    equation: 'P = a × BW^0.75',
+    linearized: 'ln(P) = ln(a) + 0.75 × ln(BW)',
+    keyVariables: 'b fixed at 0.75 (metabolic scaling theory)',
+    assumptions: 'Metabolic rate scales with the 3/4-power of body mass (West et al.)',
+    reference: 'West et al. (1997) Science 276:122; Boxenbaum (1980)',
+  },
+  {
+    method: 'Fixed Exponent (b = 0.85)',
+    equation: 'P = a × BW^0.85',
+    linearized: 'ln(P) = ln(a) + 0.85 × ln(BW)',
+    keyVariables: 'b fixed at 0.85 (empirical mid-range value)',
+    assumptions: 'Empirically derived exponent for CL scaling',
+    reference: 'Mahmood (1998) Eur J Drug Metab Pharmacokinet 23:49',
+  },
+  {
+    method: 'Fixed Exponent (b = 1.0 — Linear)',
+    equation: 'P = a × BW^1.0',
+    linearized: 'ln(P) = ln(a) + 1.0 × ln(BW)',
+    keyVariables: 'b fixed at 1.0 (linear body-weight proportional scaling)',
+    assumptions: 'Linear proportional scaling with body weight',
+    reference: 'General pharmacokinetic practice',
+  },
+  {
+    method: 'Robust Regression (Huber M-estimator)',
+    equation: 'P = a × BW^b (Huber weighted fit)',
+    linearized: 'w_i = min(1, k / |r_i / σ|); σ = MAD / 0.6745; IRLS until convergence',
+    keyVariables: 'w_i = iterative weights; r_i = residuals; σ = robust scale; k = Huber constant',
+    assumptions: 'At most one or two outlier species present; majority follow power-law relationship',
+    reference: 'Huber (1973); Maronna et al. (2006) Robust Statistics',
+  },
+  {
+    method: 'Two-Species Sensitivity Analysis',
+    equation: 'P = a × BW^b (for each pair of species)',
+    linearized: 'ln(P) = ln(a) + b × ln(BW); reports range and median of predictions',
+    keyVariables: 'Each species pair provides an independent estimate',
+    assumptions: 'Each species pair provides an independent estimate',
+    reference: 'Internal sensitivity analysis approach',
+  },
+  {
+    method: 'Monkey-Only Scaling',
+    equation: 'CL_human = CL_monkey × (BW_human / BW_monkey)^b',
+    linearized: 'b estimated from monkey data or default 0.75',
+    keyVariables: 'b = exponent from primate data',
+    assumptions: 'Non-human primate metabolism closely approximates human; CYP/UGT profiles most similar in primates',
+    reference: 'Lave et al. (1997); Mahmood (2002)',
+  },
+  {
+    method: 'Leave-One-Out Cross-Validation',
+    equation: 'Fit P = a × BW^b on n-1 species; predict excluded species; compute fold error',
+    linearized: 'LOO: each species excluded in turn; prediction error assessed vs observed',
+    keyVariables: 'Fold error = predicted / observed for each excluded species',
+    assumptions: 'Assesses leave-one-out cross-validation predictive performance',
+    reference: 'Standard CV approach for allometry',
+  },
+];
+
+const ALLOMETRY_VARIABLE_DEFINITIONS = [
+  { symbol: 'P', definition: 'Pharmacokinetic parameter (CL in mL/min or Vss in L)' },
+  { symbol: 'BW', definition: 'Body weight (kg)' },
+  { symbol: 'a', definition: 'Allometric coefficient (y-intercept in log-log space)' },
+  { symbol: 'b', definition: 'Allometric exponent (slope in log-log space)' },
+  { symbol: 'fup', definition: 'Unbound plasma fraction (dimensionless, 0–1)' },
+  { symbol: 'BrW', definition: 'Brain weight (g)' },
+  { symbol: 'MLP', definition: 'Maximum life potential (years)' },
+  { symbol: 'CLu', definition: 'Unbound clearance (mL/min)' },
+  { symbol: 'Qh', definition: 'Hepatic blood flow (mL/min)' },
+  { symbol: 'MPPGL', definition: 'Microsomal protein per gram of liver (mg/g)' },
+  { symbol: 'MAD', definition: 'Median absolute deviation (robust scale estimator)' },
+  { symbol: 'T*', definition: 'Species-invariant (Dedrick) time' },
+];
+
+function buildEquationsReferenceHTML(): string {
+  let html = `<h2>Allometry Equations Reference</h2>`;
+
+  html += `<table>`;
+  html += `<tr>`;
+  html += `<th>Method</th>`;
+  html += `<th>Equation</th>`;
+  html += `<th>Linearized Form</th>`;
+  html += `<th>Key Variables</th>`;
+  html += `<th>Assumptions</th>`;
+  html += `<th>Reference</th>`;
+  html += `</tr>`;
+
+  for (const entry of ALLOMETRY_EQUATION_TABLE) {
+    html += `<tr>`;
+    html += `<td><strong>${entry.method}</strong></td>`;
+    html += `<td><code style="font-family:'Courier New',monospace;font-size:11px;">${entry.equation}</code></td>`;
+    html += `<td><code style="font-family:'Courier New',monospace;font-size:11px;">${entry.linearized}</code></td>`;
+    html += `<td style="font-size:11px;">${entry.keyVariables}</td>`;
+    html += `<td style="font-size:11px;">${entry.assumptions}</td>`;
+    html += `<td style="font-size:11px;color:#475569;">${entry.reference}</td>`;
+    html += `</tr>`;
+  }
+  html += `</table>`;
+
+  html += `<h3>Variable Definitions</h3>`;
+  html += `<table>`;
+  html += `<tr><th>Symbol</th><th>Definition</th></tr>`;
+  for (const v of ALLOMETRY_VARIABLE_DEFINITIONS) {
+    html += `<tr><td><code style="font-family:'Courier New',monospace;">${v.symbol}</code></td><td>${v.definition}</td></tr>`;
+  }
+  html += `</table>`;
+
+  return html;
+}
+
+function buildRegressionDiagnosticsHTML(result: AllometrySessionResult): string {
+  const { finalResults } = result;
+  let html = `<h2>Appendix: Regression Diagnostics</h2>`;
+  html += `<table>`;
+  html += `<tr><th>Method</th><th>Slope (b)</th><th>Intercept ln(a)</th><th>R²</th><th>95% CI Slope (lower)</th><th>95% CI Slope (upper)</th></tr>`;
+
+  for (const r of finalResults.methodResults) {
+    const reg = r.regressionCL ?? r.regressionVss;
+    if (reg) {
+      const lnA = reg.a !== undefined ? formatNumber(Math.log(reg.a), 4) : '—';
+      const slope = reg.slope !== undefined ? formatNumber(reg.slope, 4) : '—';
+      const r2 = reg.rSquared !== undefined ? formatNumber(reg.rSquared, 4) : '—';
+      const ciLow = reg.slopeCI95 ? formatNumber(reg.slopeCI95[0], 4) : '—';
+      const ciHigh = reg.slopeCI95 ? formatNumber(reg.slopeCI95[1], 4) : '—';
+      html += `<tr><td>${r.label}</td><td>${slope}</td><td>${lnA}</td><td>${r2}</td><td>${ciLow}</td><td>${ciHigh}</td></tr>`;
+    } else {
+      html += `<tr><td>${r.label}</td><td colspan="5" style="color:#94a3b8;font-style:italic;">No regression output (ensemble/sensitivity method)</td></tr>`;
+    }
+  }
+  html += `</table>`;
+  return html;
+}
+
 // Generate allometry report HTML content
 export function buildAllometryReportHTML(result: AllometrySessionResult): string {
   const { compound, inputs, finalResults, warnings, assumptions, metadata } = result;
@@ -246,6 +472,9 @@ export function buildAllometryReportHTML(result: AllometrySessionResult): string
   html += `<p><strong>Compound:</strong> ${compound.name}</p>`;
   html += `<p><strong>Run ID:</strong> ${metadata.runId}</p>`;
   html += `<p><strong>Date:</strong> ${metadata.timestamp}</p>`;
+
+  // Equations reference section (before results)
+  html += buildEquationsReferenceHTML();
 
   html += `<h2>Input Data</h2>`;
   html += `<table><tr><th>Species</th><th>BW (kg)</th><th>CL (mL/min)</th><th>Vss (L)</th><th>fup</th></tr>`;
@@ -283,6 +512,9 @@ export function buildAllometryReportHTML(result: AllometrySessionResult): string
     for (const a of assumptions) html += `<li>${a}</li>`;
     html += `</ul>`;
   }
+
+  // Regression diagnostics appendix (at end)
+  html += buildRegressionDiagnosticsHTML(result);
 
   return html;
 }

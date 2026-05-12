@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { AnimalDataPoint, IVIVESpeciesInputs, Species } from '@/types';
+import type { AnimalDataPoint, IVIVESpeciesInputs, IVIVEDataSource, BatchIVIVERecord, Species } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { PHYSIOLOGY_DB } from '@/data/physiology';
 
@@ -121,6 +121,75 @@ export function iviveCSVTemplate(): string {
     'human,70.0,1800.0,45,120,1500.0',
   ];
   return [headers, ...examples].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// IVIVE Compound-level CSV template and parser
+// ---------------------------------------------------------------------------
+// One row per compound (compound-level batch import).
+// Headers: compound_name,matrix_type,CLint_app,CLint_unit,fup,fumic,fuhep,
+//          blood_to_plasma_ratio,apply_fumic_correction,observed_CLh,comments
+
+export function iviveCompoundCSVTemplate(): string {
+  const headers =
+    'compound_name,matrix_type,CLint_app,CLint_unit,fup,fumic,fuhep,blood_to_plasma_ratio,apply_fumic_correction,observed_CLh,comments';
+  const examples = [
+    'Compound_A,microsomes,15.0,uL/min/mg,0.08,0.5,,1.0,true,,Example microsomal compound',
+    'Compound_B,hepatocytes,8.5,uL/min/1e6cells,0.15,,0.7,0.9,false,12.5,Example hepatocyte compound',
+    'Compound_C,microsomes,45.0,uL/min/mg,0.22,0.3,,1.1,true,,High CLint compound',
+  ];
+  return [headers, ...examples].join('\n');
+}
+
+export function parseIVIVECompoundCSV(rows: ParsedRow[]): BatchIVIVERecord[] {
+  return rows.map(row => {
+    const matrixRaw = String(row.matrix_type ?? '').toLowerCase().trim();
+    const CLint_source: IVIVEDataSource =
+      matrixRaw === 'hepatocytes' ? 'hepatocytes' : 'microsomes';
+
+    const fumicRaw = row.fumic;
+    const fumic: number | undefined =
+      fumicRaw !== null && fumicRaw !== undefined && String(fumicRaw).trim() !== ''
+        ? Number(fumicRaw)
+        : undefined;
+
+    const fuhepRaw = row.fuhep;
+    const fuhep: number | undefined =
+      fuhepRaw !== null && fuhepRaw !== undefined && String(fuhepRaw).trim() !== ''
+        ? Number(fuhepRaw)
+        : undefined;
+
+    const observedRaw = row.observed_CLh;
+    const observed_CLh: number | undefined =
+      observedRaw !== null && observedRaw !== undefined && String(observedRaw).trim() !== ''
+        ? Number(observedRaw)
+        : undefined;
+
+    const applyFumicRaw = String(row.apply_fumic_correction ?? 'false').toLowerCase().trim();
+    const apply_fumic_correction = applyFumicRaw === 'true';
+
+    const bpRaw = row.blood_to_plasma_ratio;
+    const BP_ratio =
+      bpRaw !== null && bpRaw !== undefined && String(bpRaw).trim() !== ''
+        ? Number(bpRaw)
+        : 1.0;
+
+    return {
+      compound_name: String(row.compound_name ?? ''),
+      CLint_source,
+      CLint_app: Number(row.CLint_app),
+      fup: Number(row.fup),
+      fumic,
+      fuhep,
+      BP_ratio,
+      apply_fumic_correction,
+      observed_CLh,
+      comments:
+        row.comments !== null && row.comments !== undefined
+          ? String(row.comments)
+          : undefined,
+    };
+  });
 }
 
 export function ddiCSVTemplate(): string {
