@@ -1363,252 +1363,313 @@ export default function IVIVEModule() {
         {/* ===== Tab 1: Inputs & Results ===== */}
         <Tabs.Content value="inputs-results" className="p-4 space-y-4 focus:outline-none">
 
-          {/* Full-width Species physiology table */}
+          {/* ── 1. Compound inputs + model selection — single full-width horizontal panel ── */}
+          <div className="bg-white rounded-lg border border-slate-200 p-4">
+            <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Compound &amp; Model Settings</h3>
+
+            {/* Compound fields — horizontal grid, all on one row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {/* Name */}
+              <div className="lg:col-span-2 flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">Compound Name</label>
+                <input
+                  type="text"
+                  value={inputs.compound.compound.name}
+                  onChange={e => handleCompoundChange({ ...inputs.compound, compound: { ...inputs.compound.compound, name: e.target.value } })}
+                  placeholder="e.g. Compound A"
+                  className="rounded border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* CLint source toggle */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">CLint Source</label>
+                <div className="flex gap-1 h-[34px]">
+                  {(['microsomes', 'hepatocytes'] as const).map(src => (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() => handleCompoundChange({ ...inputs.compound, CLint_source: src })}
+                      className={clsx(
+                        'flex-1 rounded border px-1 py-1 text-[10px] font-medium capitalize transition-colors',
+                        inputs.compound.CLint_source === src
+                          ? 'border-teal-600 bg-teal-600 text-white'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      {src === 'microsomes' ? 'Mic' : 'Hep'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* CLint_app */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">
+                  CLint_app&nbsp;
+                  <span className="text-slate-400 font-normal">({inputs.compound.CLint_source === 'microsomes' ? 'µL/min/mg' : 'µL/min/10⁶'})</span>
+                </label>
+                <input type="number" min={0} step="any"
+                  value={inputs.compound.CLint_app || ''}
+                  onChange={e => handleCompoundChange({ ...inputs.compound, CLint_app: parseFloat(e.target.value) || 0 })}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="—"
+                />
+              </div>
+
+              {/* fup */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">fup <span className="text-slate-400 font-normal">0–1</span></label>
+                <input type="number" min={0} max={1} step={0.01}
+                  value={inputs.compound.fup}
+                  onChange={e => handleCompoundChange({ ...inputs.compound, fup: parseFloat(e.target.value) ?? 0.1 })}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* fumic / fuhep */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">
+                  {inputs.compound.CLint_source === 'microsomes' ? 'fumic' : 'fuhep'}
+                  <span className="text-slate-400 font-normal"> 0–1</span>
+                </label>
+                <input type="number" min={0} max={1} step={0.01}
+                  value={(inputs.compound.CLint_source === 'microsomes' ? inputs.compound.fumic : inputs.compound.fuhep) ?? ''}
+                  onChange={e => {
+                    const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                    handleCompoundChange(inputs.compound.CLint_source === 'microsomes'
+                      ? { ...inputs.compound, fumic: v }
+                      : { ...inputs.compound, fuhep: v });
+                  }}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="optional"
+                />
+              </div>
+
+              {/* BP ratio */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">BP ratio</label>
+                <input type="number" min={0.1} step={0.05}
+                  value={inputs.compound.BP_ratio}
+                  onChange={e => handleCompoundChange({ ...inputs.compound, BP_ratio: parseFloat(e.target.value) ?? 1 })}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* Observed CLh */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">Obs. CLh <span className="text-slate-400 font-normal">mL/min</span></label>
+                <input type="number" min={0} step="any"
+                  value={inputs.compound.observed_CLh ?? ''}
+                  onChange={e => handleCompoundChange({ ...inputs.compound, observed_CLh: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="optional"
+                />
+              </div>
+            </div>
+
+            {/* fumic correction toggle + model checkboxes — second row */}
+            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-6">
+              {/* fumic correction */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Switch.Root
+                  checked={inputs.compound.apply_fumic_correction}
+                  onCheckedChange={v => handleCompoundChange({ ...inputs.compound, apply_fumic_correction: v })}
+                  className={clsx(
+                    'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+                    inputs.compound.apply_fumic_correction ? 'bg-teal-600' : 'bg-slate-300',
+                  )}
+                >
+                  <Switch.Thumb className={clsx(
+                    'pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg transition-transform',
+                    inputs.compound.apply_fumic_correction ? 'translate-x-4' : 'translate-x-0',
+                  )} />
+                </Switch.Root>
+                <span className="text-xs font-medium text-slate-600">
+                  Apply {inputs.compound.CLint_source === 'microsomes' ? 'fumic' : 'fuhep'} correction
+                </span>
+              </label>
+
+              {/* Divider */}
+              <div className="h-4 w-px bg-slate-200" />
+
+              {/* Model checkboxes */}
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Models:</span>
+              {ALL_MODELS.map(m => {
+                const cfg = IVIVE_MODEL_CONFIGS[m];
+                const checked = inputs.modelsSelected.includes(m);
+                return (
+                  <label key={m} className="flex items-center gap-1.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={e => handleModelToggle(m, e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span className={clsx('text-xs font-medium transition-colors', checked ? 'text-teal-700' : 'text-slate-600 group-hover:text-slate-800')}>
+                      {cfg.label.replace(/\s*\(.*?\)\s*/g, '').trim()}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── 2. Batch import panel (full width, only when records loaded) ── */}
+          {batchRecords.length > 0 && (
+            <div className="bg-amber-50 rounded-lg border border-amber-200">
+              <div className="px-4 py-2.5 flex items-center justify-between border-b border-amber-200">
+                <span className="text-xs font-semibold text-amber-800">
+                  Batch Import — {batchRecords.length} compound{batchRecords.length !== 1 ? 's' : ''}
+                </span>
+                <button type="button" onClick={handleClearBatch}
+                  className="rounded p-0.5 text-amber-500 hover:text-amber-700" title="Clear batch">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="text-xs text-amber-700 font-medium whitespace-nowrap">Load compound:</label>
+                  <select
+                    value={selectedBatchCompound ?? ''}
+                    onChange={e => handleLoadBatchCompound(e.target.value)}
+                    className="rounded border border-amber-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  >
+                    {batchRecords.map(r => (
+                      <option key={r.compound_name} value={r.compound_name}>{r.compound_name}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={handleRunBatch} disabled={batchRunning}
+                    className="flex items-center gap-1.5 rounded border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200 disabled:opacity-50">
+                    <RefreshCw className={clsx('h-3 w-3', batchRunning && 'animate-spin')} />
+                    {batchRunning ? 'Running…' : 'Run All'}
+                  </button>
+                  {batchResults.length > 0 && (
+                    <button type="button" onClick={handleExportBatchResults}
+                      className="flex items-center gap-1.5 rounded border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-200">
+                      <FileDown className="h-3 w-3" /> Export Results
+                    </button>
+                  )}
+                </div>
+                {/* Compact batch summary table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-amber-100 text-amber-800">
+                        <th className="px-2 py-1 text-left font-medium">Compound</th>
+                        <th className="px-2 py-1 text-right font-medium">CLint_app</th>
+                        <th className="px-2 py-1 text-right font-medium">fup</th>
+                        <th className="px-2 py-1 text-left font-medium">Matrix</th>
+                        <th className="px-2 py-1 text-right font-medium">CLh (human, WS)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchRecords.map((r, i) => {
+                        const batchRes = batchResults.find(br => br.compound_name === r.compound_name);
+                        const humanRes = batchRes?.results.humanResult?.modelOutputs.find(o => o.model === 'well_stirred_with_binding');
+                        return (
+                          <tr key={r.compound_name}
+                            className={clsx('cursor-pointer hover:bg-amber-100 transition-colors', i % 2 === 0 ? 'bg-white' : 'bg-amber-50')}
+                            onClick={() => handleLoadBatchCompound(r.compound_name)}>
+                            <td className="px-2 py-1 font-medium text-slate-800">{r.compound_name}</td>
+                            <td className="px-2 py-1 text-right font-mono">{r.CLint_app}</td>
+                            <td className="px-2 py-1 text-right font-mono">{r.fup}</td>
+                            <td className="px-2 py-1">{r.CLint_source}</td>
+                            <td className="px-2 py-1 text-right font-mono">{humanRes ? formatNumber(humanRes.CLh_predicted) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {importErrors.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {importErrors.map((err, i) => <li key={i} className="text-xs text-red-600">{err}</li>)}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Import errors (parse failure, no records loaded) */}
+          {batchRecords.length === 0 && importErrors.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+              <ul className="space-y-0.5">
+                {importErrors.map((err, i) => <li key={i} className="text-xs text-red-600">{err}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {/* ── 3. Species physiology table — full width ── */}
           <SpeciesTable
             speciesData={inputs.speciesData}
             onSpeciesChange={handleSpeciesChange}
             onResetSpeciesToDb={handleResetSpeciesToDb}
           />
 
-          {/* 2-column grid */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-
-            {/* Left column: Compound inputs + Model selection + Equations + Batch */}
+          {/* ── 4. Results — full width ── */}
+          {hasResults && results ? (
             <div className="space-y-4">
+              {/* Human summary cards */}
+              {results.humanResult && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {results.humanResult.modelOutputs.map(mo => (
+                    <div key={mo.model} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-xs font-medium text-slate-500 leading-tight mb-1">{mo.label}</p>
+                      <p className="text-lg font-bold text-teal-700 font-mono">{formatNumber(mo.CLh_predicted)}</p>
+                      <p className="text-xs text-slate-400">mL/min (human)</p>
+                      <span className={clsx('mt-1 inline-block rounded-full px-1.5 py-0.5 text-xs font-semibold', EXTRACTION_COLORS[mo.ExtractionCategory])}>
+                        {mo.ExtractionCategory}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-              {/* Compound inputs */}
+              {/* Full-width results table */}
               <div className="bg-white rounded-lg border border-slate-200 p-4">
-                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Compound Inputs</h3>
-                <CompoundPanel compound={inputs.compound} onChange={handleCompoundChange} />
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Results by Species &amp; Model</h3>
+                <ResultsTable results={results} modelsSelected={inputs.modelsSelected} />
               </div>
 
-              {/* Model selection */}
+              {/* Full-width sensitivity analysis */}
               <div className="bg-white rounded-lg border border-slate-200 p-4">
-                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">IVIVE Models</h3>
-                <div className="space-y-2.5">
-                  {ALL_MODELS.map(m => {
-                    const cfg = IVIVE_MODEL_CONFIGS[m];
-                    const checked = inputs.modelsSelected.includes(m);
-                    return (
-                      <label key={m} className="flex items-start gap-2.5 cursor-pointer group">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={e => handleModelToggle(m, e.target.checked)}
-                          className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-                        />
-                        <div>
-                          <p className="text-xs font-medium text-slate-700 group-hover:text-teal-700 leading-tight">{cfg.label}</p>
-                          <p className="text-xs text-slate-400 leading-tight mt-0.5">{cfg.description.slice(0, 80)}…</p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <Sliders className="h-3.5 w-3.5 text-teal-600" />
+                  Sensitivity Analysis
+                </h3>
+                <SensitivityPanel inputs={inputs} results={results} />
               </div>
-
-              {/* Equations accordion */}
-              <div className="bg-white rounded-lg border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setShowEquations(v => !v)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors rounded-lg"
-                >
-                  <span className="flex items-center gap-2">
-                    <BookOpen className="h-4 w-4 text-teal-600" />
-                    Model Equations
-                  </span>
-                  {showEquations ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </button>
-                {showEquations && (
-                  <div className="px-4 pb-4 border-t border-slate-100">
-                    <EquationPanel formulas={IVIVE_FORMULAS} />
-                  </div>
-                )}
-              </div>
-
-              {/* Batch import panel (shown when records are loaded) */}
-              {batchRecords.length > 0 && (
-                <div className="bg-amber-50 rounded-lg border border-amber-200">
-                  <div className="px-4 py-2.5 flex items-center justify-between border-b border-amber-200">
-                    <span className="text-xs font-semibold text-amber-800">
-                      Batch Import — {batchRecords.length} compound{batchRecords.length !== 1 ? 's' : ''}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleClearBatch}
-                      className="rounded p-0.5 text-amber-500 hover:text-amber-700"
-                      title="Clear batch"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="p-4 space-y-3">
-                    {/* Compound picker */}
-                    <div>
-                      <label className="text-xs text-amber-700 font-medium">Load compound into inputs:</label>
-                      <select
-                        value={selectedBatchCompound ?? ''}
-                        onChange={e => handleLoadBatchCompound(e.target.value)}
-                        className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      >
-                        {batchRecords.map(r => (
-                          <option key={r.compound_name} value={r.compound_name}>
-                            {r.compound_name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Run All + Export Batch Results */}
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleRunBatch}
-                        disabled={batchRunning}
-                        className={clsx(
-                          'flex-1 inline-flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-semibold transition-colors',
-                          batchRunning
-                            ? 'cursor-not-allowed border-slate-300 bg-slate-100 text-slate-400'
-                            : 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700',
-                        )}
-                      >
-                        <Play className="h-3 w-3" />
-                        {batchRunning ? 'Running…' : 'Run All'}
-                      </button>
-                      {batchResults.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleExportBatchResults}
-                          className="flex-1 inline-flex items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-                        >
-                          <Download className="h-3 w-3" />
-                          Export Results
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Compact batch summary table */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs border-collapse min-w-[220px]">
-                        <thead>
-                          <tr className="bg-amber-100 text-amber-800">
-                            <th className="px-2 py-1 text-left font-medium">Compound</th>
-                            <th className="px-2 py-1 text-right font-medium">CLint</th>
-                            <th className="px-2 py-1 text-right font-medium">fup</th>
-                            {batchResults.length > 0 && (
-                              <th className="px-2 py-1 text-right font-medium">CLh (WS)</th>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {batchRecords.map((rec, i) => {
-                            const bres = batchResults.find(r => r.compound_name === rec.compound_name);
-                            const humanSr = bres?.results.speciesResults.find(sr => sr.species === 'human');
-                            const wsMo = humanSr?.modelOutputs.find(m => m.model === 'well_stirred_no_binding');
-                            return (
-                              <tr
-                                key={rec.compound_name}
-                                className={clsx(
-                                  'border-b border-amber-100 cursor-pointer hover:bg-amber-100',
-                                  i % 2 === 0 ? 'bg-white' : 'bg-amber-50',
-                                  selectedBatchCompound === rec.compound_name && 'ring-1 ring-inset ring-amber-400',
-                                )}
-                                onClick={() => handleLoadBatchCompound(rec.compound_name)}
-                              >
-                                <td className="px-2 py-1 font-medium text-slate-700 max-w-[80px] truncate" title={rec.compound_name}>
-                                  {rec.compound_name}
-                                </td>
-                                <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.CLint_app}</td>
-                                <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.fup}</td>
-                                {batchResults.length > 0 && (
-                                  <td className="px-2 py-1 text-right font-mono text-slate-600">
-                                    {wsMo ? formatNumber(wsMo.CLh_predicted) : '—'}
-                                  </td>
-                                )}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Import errors */}
-                    {importErrors.length > 0 && (
-                      <ul className="space-y-0.5">
-                        {importErrors.map((err, i) => (
-                          <li key={i} className="text-xs text-red-600">{err}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Import errors shown even when no records loaded (e.g. parse failure) */}
-              {batchRecords.length === 0 && importErrors.length > 0 && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-                  <ul className="space-y-0.5">
-                    {importErrors.map((err, i) => (
-                      <li key={i} className="text-xs text-red-600">{err}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
             </div>
-
-            {/* Right column: Results table or empty state */}
-            <div>
-              {hasResults && results ? (
-                <div className="space-y-4">
-                  {/* Summary cards */}
-                  {results.humanResult && (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      {results.humanResult.modelOutputs.map(mo => (
-                        <div key={mo.model} className="rounded-lg border border-slate-200 bg-white p-3">
-                          <p className="text-xs font-medium text-slate-500 leading-tight mb-1">{mo.label}</p>
-                          <p className="text-lg font-bold text-teal-700 font-mono">{formatNumber(mo.CLh_predicted)}</p>
-                          <p className="text-xs text-slate-400">mL/min (human)</p>
-                          <span className={clsx('mt-1 inline-block rounded-full px-1.5 py-0.5 text-xs font-semibold', EXTRACTION_COLORS[mo.ExtractionCategory])}>
-                            {mo.ExtractionCategory}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Results table */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-4">
-                    <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Results</h3>
-                    <ResultsTable results={results} modelsSelected={inputs.modelsSelected} />
-                  </div>
-
-                  {/* Sensitivity analysis */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-4">
-                    <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                      <Sliders className="h-3.5 w-3.5 text-teal-600" />
-                      Sensitivity Analysis
-                    </h3>
-                    <SensitivityPanel inputs={inputs} results={results} />
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-64 text-slate-400 bg-white rounded-lg border border-dashed border-slate-300">
-                  <FlaskConical className="h-10 w-10 mb-2 text-slate-300" />
-                  <p className="text-sm font-medium">Results will appear here</p>
-                  <p className="text-xs mt-1">
-                    Click <strong>Run IVIVE</strong> to see predictions
-                  </p>
-                </div>
-              )}
+          ) : (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-400 bg-white rounded-lg border border-dashed border-slate-300">
+              <FlaskConical className="h-8 w-8 mb-2 text-slate-300" />
+              <p className="text-sm font-medium">Results will appear here after running</p>
             </div>
-          </div>
+          )}
 
-          {/* Warnings below grid */}
+          {/* ── 5. Warnings ── */}
           {allWarnings.length > 0 && (
             <WarningBox warnings={allWarnings} title="Computation Notices" collapsible />
           )}
+
+          {/* ── 6. Equations accordion — collapsible, at the bottom ── */}
+          <div className="bg-white rounded-lg border border-slate-200">
+            <button type="button" onClick={() => setShowEquations(v => !v)}
+              className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors rounded-lg">
+              <span className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-teal-600" />
+                Model Equations Reference
+              </span>
+              {showEquations ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showEquations && (
+              <div className="px-4 pb-4 border-t border-slate-100">
+                <EquationPanel formulas={IVIVE_FORMULAS} />
+              </div>
+            )}
+          </div>
+
         </Tabs.Content>
 
         {/* ===== Tab 2: Plots ===== */}
