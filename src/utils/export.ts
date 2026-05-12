@@ -518,3 +518,20 @@ export function buildAllometryReportHTML(result: AllometrySessionResult): string
 
   return html;
 }
+
+/**
+ * Returns a standalone `<details>/<summary>` accordion block containing the
+ * allometry equations reference table, suitable for embedding in the
+ * ReportingModule preview HTML.
+ */
+export function buildAllometryEquationsAccordionHTML(): string {
+  const tableHTML = buildEquationsReferenceHTML();
+  return `<details style="margin:12px 0;border:1px solid #c7d2fe;border-radius:6px;overflow:hidden;">
+  <summary style="cursor:pointer;padding:10px 14px;background:#eef2ff;font-weight:600;font-size:13px;color:#3730a3;list-style:none;display:flex;align-items:center;gap:6px;">
+    &#9660; Allometry Equations Reference
+  </summary>
+  <div style="padding:12px 14px;font-size:12px;">
+    ${tableHTML}
+  </div>
+</details>`;
+}

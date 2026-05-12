@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { AnimalDataPoint, IVIVESpeciesInputs, IVIVEDataSource, BatchIVIVERecord, Species } from '@/types';
+import type { AnimalDataPoint, IVIVESpeciesInputs, IVIVEDataSource, BatchIVIVERecord, BatchDDIRecord, Species } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { PHYSIOLOGY_DB } from '@/data/physiology';
 
@@ -193,12 +193,64 @@ export function parseIVIVECompoundCSV(rows: ParsedRow[]): BatchIVIVERecord[] {
 }
 
 export function ddiCSVTemplate(): string {
-  const headers = 'enzyme_or_transporter,type,Ki_uM,IC50_uM,kinact_h,KI_uM,Emax_fold,EC50_uM,fm,Iu_max_uM';
+  const headers =
+    'compound_name,enzyme_or_transporter,pathway_type,fm,Ki_uM,IC50_uM,kinact_per_h,KI_uM,Emax_fold,EC50_uM,concentration_metric_type,concentration_value_uM,unbound_fraction,substrate_flag,perpetrator_flag,comments';
   const examples = [
-    'CYP3A4,reversible_inhibitor,,5.0,,,,,,0.5',
-    'CYP3A4,TDI,,,,1.2,0.8,,,0.5',
-    'CYP3A4,substrate,,,,,,,0.65,',
-    'CYP2D6,substrate,,,,,,,0.20,',
+    'Compound_A,CYP3A4,substrate,0.65,,,,,,,,,,true,false,Major CYP3A4 substrate',
+    'Compound_A,CYP3A4,reversible_inhibitor,,2.5,,,,,Iu_max,0.5,1.0,,true,Competitive inhibitor',
+    'Compound_A,CYP3A4,TDI,,,1.2,0.8,,,Iu_max,0.5,1.0,,true,MBI data',
+    'Compound_A,CYP2D6,substrate,0.20,,,,,,,,,,true,false,Minor CYP2D6 substrate',
+    'Compound_B,CYP2D6,substrate,0.80,,,,,,,,,,true,false,Sensitive CYP2D6 substrate',
+    'Compound_B,CYP3A4,inducer,,,,,3.0,1.0,Iu_max,2.0,1.0,,true,CYP3A4 inducer',
   ];
   return [headers, ...examples].join('\n');
+}
+
+/**
+ * Parse DDI batch CSV rows into BatchDDIRecord[].
+ *
+ * Expected columns:
+ *   compound_name, enzyme_or_transporter, pathway_type, fm,
+ *   Ki_uM, IC50_uM, kinact_per_h, KI_uM, Emax_fold, EC50_uM,
+ *   concentration_metric_type, concentration_value_uM,
+ *   unbound_fraction, substrate_flag, perpetrator_flag, comments
+ */
+export function parseDDIBatchCSV(rows: ParsedRow[]): BatchDDIRecord[] {
+  return rows
+    .filter(row => row.compound_name != null && String(row.compound_name).trim() !== '')
+    .map(row => {
+      const pathwayRaw = String(row.pathway_type ?? '').trim().toLowerCase();
+      let pathway_type: BatchDDIRecord['pathway_type'] = 'substrate';
+      if (pathwayRaw === 'reversible_inhibitor') pathway_type = 'reversible_inhibitor';
+      else if (pathwayRaw === 'tdi')              pathway_type = 'TDI';
+      else if (pathwayRaw === 'inducer')          pathway_type = 'inducer';
+      else if (pathwayRaw === 'transporter_inhibitor') pathway_type = 'transporter_inhibitor';
+
+      function optNum(v: string | number | boolean | null): number | undefined {
+        if (v === null || v === undefined || String(v).trim() === '') return undefined;
+        const n = Number(v);
+        return isNaN(n) ? undefined : n;
+      }
+
+      return {
+        compound_name:            String(row.compound_name ?? '').trim(),
+        enzyme_or_transporter:    String(row.enzyme_or_transporter ?? '').trim(),
+        pathway_type,
+        fm:                       optNum(row.fm),
+        Ki:                       optNum(row.Ki_uM),
+        IC50:                     optNum(row.IC50_uM),
+        kinact:                   optNum(row.kinact_per_h),
+        KI:                       optNum(row.KI_uM),
+        Emax:                     optNum(row.Emax_fold),
+        EC50:                     optNum(row.EC50_uM),
+        concentration_metric_type: row.concentration_metric_type != null
+          ? String(row.concentration_metric_type).trim()
+          : undefined,
+        concentration_value:       optNum(row.concentration_value_uM),
+        unbound_fraction:          optNum(row.unbound_fraction),
+        comments: row.comments != null && String(row.comments).trim() !== ''
+          ? String(row.comments).trim()
+          : undefined,
+      } satisfies BatchDDIRecord;
+    });
 }

@@ -11,7 +11,7 @@ import { useAppStore } from '@/store';
 import { parseUploadedFile, runLabel, deserializeSession } from '@/utils/session';
 import {
   exportJSON, exportHTMLReport, exportMarkdown, exportCSV,
-  buildAllometryReportHTML, formatNumber,
+  buildAllometryReportHTML, buildAllometryEquationsAccordionHTML, formatNumber,
 } from '@/utils/export';
 
 const DEFAULT_DISCLAIMER =
@@ -388,6 +388,7 @@ function buildCombinedReportHTML(
 
     if (type === 'allometry') {
       html += buildAllometryReportHTML(run as AllometrySessionResult);
+      html += buildAllometryEquationsAccordionHTML();
     } else if (type === 'ivive') {
       html += buildIVIVEHTML(run as IVIVESessionResult);
     } else if (type === 'ddi') {

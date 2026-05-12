@@ -1091,6 +1091,75 @@ export default function IVIVEModule() {
     exportCSV(rows, `ivive-results-${inputs.compound.compound.name || 'compound'}.csv`);
   }, [results, inputs]);
 
+  // ---- Batch / import handlers ----
+
+  const handleDownloadTemplate = useCallback(() => {
+    downloadCSV(iviveCompoundCSVTemplate(), 'ivive-compound-template.csv');
+  }, []);
+
+  const handleImportCompounds = useCallback(async (file: File) => {
+    setImportErrors([]);
+    try {
+      const rows = await parseFile(file);
+      const records = parseIVIVECompoundCSV(rows);
+      const errs = validateBatchRecords(records);
+      setImportErrors(errs);
+      setBatchRecords(records);
+      setSelectedBatchCompound(records.length > 0 ? records[0].compound_name : null);
+      setBatchResults([]);
+    } catch (e) {
+      setImportErrors([e instanceof Error ? e.message : 'Unknown parse error']);
+    }
+  }, []);
+
+  const handleExportInputs = useCallback(() => {
+    downloadCSV(buildExportInputsCSV(inputs.compound), `ivive-inputs-${inputs.compound.compound.name || 'compound'}.csv`);
+  }, [inputs.compound]);
+
+  const handleRunBatch = useCallback(() => {
+    if (batchRecords.length === 0) return;
+    setBatchRunning(true);
+    try {
+      const batchRes = runBatchIVIVE(batchRecords, inputs.speciesData, inputs.modelsSelected);
+      setBatchResults(batchRes);
+    } finally {
+      setBatchRunning(false);
+    }
+  }, [batchRecords, inputs.speciesData, inputs.modelsSelected]);
+
+  const handleLoadBatchCompound = useCallback((compoundName: string) => {
+    const rec = batchRecords.find(r => r.compound_name === compoundName);
+    if (!rec) return;
+    setSelectedBatchCompound(compoundName);
+    setInputs(prev => ({
+      ...prev,
+      compound: {
+        ...prev.compound,
+        compound: { name: rec.compound_name },
+        CLint_app: rec.CLint_app,
+        CLint_source: rec.CLint_source,
+        fup: rec.fup,
+        fumic: rec.fumic,
+        fuhep: rec.fuhep,
+        BP_ratio: rec.BP_ratio,
+        apply_fumic_correction: rec.apply_fumic_correction,
+        observed_CLh: rec.observed_CLh,
+      },
+    }));
+  }, [batchRecords]);
+
+  const handleClearBatch = useCallback(() => {
+    setBatchRecords([]);
+    setBatchResults([]);
+    setSelectedBatchCompound(null);
+    setImportErrors([]);
+  }, []);
+
+  const handleExportBatchResults = useCallback(() => {
+    if (batchResults.length === 0) return;
+    downloadCSV(buildBatchResultsCSV(batchResults), 'ivive-batch-results.csv');
+  }, [batchResults]);
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -1111,6 +1180,43 @@ export default function IVIVEModule() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Hidden file input for CSV/XLSX import */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) void handleImportCompounds(file);
+              // Reset so the same file can be re-imported
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            Download Template
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Import Compounds
+          </button>
+          <button
+            type="button"
+            onClick={handleExportInputs}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export Inputs
+          </button>
           <button
             type="button"
             onClick={handleLoadExample}
@@ -1154,6 +1260,143 @@ export default function IVIVEModule() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* ======== LEFT PANEL: Inputs ======== */}
         <div className="w-72 shrink-0 flex flex-col border-r border-slate-200 bg-slate-50 overflow-y-auto">
+
+          {/* ---- Batch Import Panel (shown when records are loaded) ---- */}
+          {batchRecords.length > 0 && (
+            <div className="border-b border-amber-200 bg-amber-50">
+              <div className="px-4 py-2.5 flex items-center justify-between">
+                <span className="text-xs font-semibold text-amber-800">
+                  Batch Import — {batchRecords.length} compound{batchRecords.length !== 1 ? 's' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearBatch}
+                  className="rounded p-0.5 text-amber-500 hover:text-amber-700"
+                  title="Clear batch"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Compound picker */}
+              <div className="px-4 pb-2">
+                <label className="text-xs text-amber-700 font-medium">Load compound into inputs:</label>
+                <select
+                  value={selectedBatchCompound ?? ''}
+                  onChange={e => handleLoadBatchCompound(e.target.value)}
+                  className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                >
+                  {batchRecords.map(r => (
+                    <option key={r.compound_name} value={r.compound_name}>
+                      {r.compound_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Run All + Export Batch Results buttons */}
+              <div className="px-4 pb-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunBatch}
+                  disabled={batchRunning}
+                  className={clsx(
+                    'flex-1 inline-flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-semibold transition-colors',
+                    batchRunning
+                      ? 'cursor-not-allowed border-slate-300 bg-slate-100 text-slate-400'
+                      : 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700',
+                  )}
+                >
+                  <Play className="h-3 w-3" />
+                  {batchRunning ? 'Running…' : 'Run All'}
+                </button>
+                {batchResults.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleExportBatchResults}
+                    className="flex-1 inline-flex items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <Download className="h-3 w-3" />
+                    Export Results
+                  </button>
+                )}
+              </div>
+
+              {/* Compact batch summary table */}
+              {batchRecords.length > 0 && (
+                <div className="px-4 pb-3 overflow-x-auto">
+                  <table className="w-full text-xs border-collapse min-w-[220px]">
+                    <thead>
+                      <tr className="bg-amber-100 text-amber-800">
+                        <th className="px-2 py-1 text-left font-medium">Compound</th>
+                        <th className="px-2 py-1 text-right font-medium">CLint</th>
+                        <th className="px-2 py-1 text-right font-medium">fup</th>
+                        {batchResults.length > 0 && (
+                          <th className="px-2 py-1 text-right font-medium">CLh (WS)</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchRecords.map((rec, i) => {
+                        const bres = batchResults.find(r => r.compound_name === rec.compound_name);
+                        const humanSr = bres?.results.speciesResults.find(sr => sr.species === 'human');
+                        const wsMo = humanSr?.modelOutputs.find(m => m.model === 'well_stirred_no_binding');
+                        return (
+                          <tr
+                            key={rec.compound_name}
+                            className={clsx(
+                              'border-b border-amber-100 cursor-pointer hover:bg-amber-100',
+                              i % 2 === 0 ? 'bg-white' : 'bg-amber-50',
+                              selectedBatchCompound === rec.compound_name && 'ring-1 ring-inset ring-amber-400',
+                            )}
+                            onClick={() => handleLoadBatchCompound(rec.compound_name)}
+                          >
+                            <td className="px-2 py-1 font-medium text-slate-700 max-w-[80px] truncate" title={rec.compound_name}>
+                              {rec.compound_name}
+                            </td>
+                            <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.CLint_app}</td>
+                            <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.fup}</td>
+                            {batchResults.length > 0 && (
+                              <td className="px-2 py-1 text-right font-mono text-slate-600">
+                                {wsMo ? formatNumber(wsMo.CLh_predicted) : '—'}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Import errors */}
+              {importErrors.length > 0 && (
+                <div className="px-4 pb-3">
+                  <ul className="space-y-0.5">
+                    {importErrors.map((err, i) => (
+                      <li key={i} className="text-xs text-red-600">
+                        {err}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Import errors shown even when no records loaded (e.g. parse failure) */}
+          {batchRecords.length === 0 && importErrors.length > 0 && (
+            <div className="border-b border-red-200 bg-red-50 px-4 py-2">
+              <ul className="space-y-0.5">
+                {importErrors.map((err, i) => (
+                  <li key={i} className="text-xs text-red-600">
+                    {err}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="px-4 py-3 border-b border-slate-200 bg-white">
             <h2 className="text-sm font-semibold text-slate-800">Compound Inputs</h2>
           </div>
