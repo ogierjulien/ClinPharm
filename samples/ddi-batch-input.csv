@@ -1,0 +1,7 @@
+compound_name,enzyme_or_transporter,pathway_type,fm,Ki_uM,IC50_uM,kinact_per_h,KI_uM,Emax_fold,EC50_uM,concentration_metric_type,concentration_value_uM,unbound_fraction,substrate_flag,perpetrator_flag,comments
+Compound_X,CYP3A4,substrate,0.65,,,,,,,,,,true,false,Major CYP3A4 substrate
+Compound_X,CYP3A4,reversible_inhibitor,,2.5,,,,,Iu_max,0.5,1.0,,true,Competitive Ki from in vitro
+Compound_X,CYP3A4,TDI,,,1.2,0.8,,,Iu_max,0.5,1.0,,true,MBI kinact and KI
+Compound_Y,CYP2D6,substrate,0.80,,,,,,,,,,true,false,Sensitive CYP2D6 substrate
+Compound_Y,CYP2D6,reversible_inhibitor,,5.0,,,,,Iu_max,1.0,1.0,,true,Competitive inhibition of CYP2D6
+Compound_Y,CYP3A4,inducer,,,,,,3.0,1.0,Iu_max,2.0,1.0,,true,Emax model for CYP3A4 induction

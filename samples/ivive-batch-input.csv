@@ -1,0 +1,6 @@
+compound_name,matrix_type,CLint_app,CLint_unit,fup,fumic,fuhep,blood_to_plasma_ratio,apply_fumic_correction,observed_CLh,comments
+Compound_A,microsomes,15.0,uL/min/mg,0.08,0.5,,1.0,true,,Example microsomal compound
+Compound_B,hepatocytes,8.5,uL/min/1e6cells,0.15,,0.7,0.9,false,12.5,Example hepatocyte compound
+Compound_C,microsomes,45.0,uL/min/mg,0.22,0.3,,1.1,true,,High CLint compound
+Compound_D,hepatocytes,3.2,uL/min/1e6cells,0.45,,0.9,1.0,false,,Low CLint hepatocyte compound
+Compound_E,microsomes,120.0,uL/min/mg,0.05,0.2,,0.85,true,95.0,High CLint low fup microsomal compound
