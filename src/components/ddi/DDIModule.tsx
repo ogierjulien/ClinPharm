@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 // @ts-ignore
 import Plot from 'react-plotly.js';
+import * as Tabs from '@radix-ui/react-tabs';
 import {
   Play,
   RotateCcw,
@@ -2057,6 +2058,7 @@ export default function DDIModule() {
   const [inputs, setInputsState] = useState<DDIInputs>(() => ddiInputs ?? blankInputs());
   const [results, setResultsState] = useState<DDIResults | null>(ddiResults);
   const [activeTab, setActiveTab] = useState<TabId>('substrate');
+  const [outerTab, setOuterTab] = useState<'assessment' | 'plots'>('assessment');
   const [error, setError] = useState<string | null>(null);
 
   // Tab F — Mechanistic Static Model state
@@ -2374,127 +2376,288 @@ export default function DDIModule() {
         </div>
       </div>
 
-      {/* Body */}
-      <div className="max-w-screen-2xl mx-auto px-6 py-6 space-y-6">
-
-        {/* Compound + Concentration panel */}
-        <ConcPanel
-          inputs={inputs}
-          onChange={patch => setInputs(prev => ({ ...prev, ...patch }))}
-          onFillIuFields={handleFillIuFields}
-        />
-
-        {/* Error banner */}
-        {error && (
-          <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
-            <span><strong>Error:</strong> {error}</span>
-          </div>
-        )}
-
-        {/* Tab navigation + content */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-slate-200 overflow-x-auto">
-            {TABS.map((tab, idx) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={clsx(
-                  'flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors',
-                  activeTab === tab.id
-                    ? 'border-amber-600 text-amber-700 bg-amber-50'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
-                )}
-              >
-                <span className="hidden sm:inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 mr-0.5">
-                  {String.fromCharCode(65 + idx)}
-                </span>
-                <span className="hidden md:block">{tab.label}</span>
-                <span className="md:hidden">{tab.shortLabel}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div className="p-5">
-            {activeTab === 'substrate' && (
-              <SubstrateTab
-                pathways={inputs.substratePathways}
-                onChange={v => setInputs({ substratePathways: v })}
-              />
-            )}
-            {activeTab === 'reversible' && (
-              <ReversibleTab
-                inhibitors={inputs.reversibleInhibitors}
-                onChange={v => setInputs({ reversibleInhibitors: v })}
-              />
-            )}
-            {activeTab === 'tdi' && (
-              <TDITab
-                data={inputs.tdiData}
-                onChange={v => setInputs({ tdiData: v })}
-              />
-            )}
-            {activeTab === 'induction' && (
-              <InductionTab
-                data={inputs.induction}
-                onChange={v => setInputs({ induction: v })}
-              />
-            )}
-            {activeTab === 'transporters' && (
-              <TransporterTab
-                data={inputs.transporterInhibition}
-                onChange={v => setInputs({ transporterInhibition: v })}
-              />
-            )}
-            {activeTab === 'mechanistic' && (
-              <MechanisticStaticTab
-                msmEnzymeInputs={msmEnzymeInputs}
-                setMsmEnzymeInputs={setMsmEnzymeInputs}
-                msmResults={msmResults}
-                setMsmResults={setMsmResults}
-                ddiInputs={inputs}
-                onImportFile={handleImportDDIFile}
-              />
-            )}
-          </div>
+      {/* Outer tab bar */}
+      <Tabs.Root
+        value={outerTab}
+        onValueChange={v => setOuterTab(v as 'assessment' | 'plots')}
+        className="max-w-screen-2xl mx-auto"
+      >
+        <div className="bg-white border-b border-slate-200 px-4">
+          <Tabs.List className="flex gap-0" aria-label="DDI sections">
+            <Tabs.Trigger
+              value="assessment"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-amber-700 data-[state=active]:border-amber-600 focus:outline-none"
+            >
+              DDI Assessment
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="plots"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-amber-700 data-[state=active]:border-amber-600 focus:outline-none"
+            >
+              Plots &amp; Risk
+            </Tabs.Trigger>
+          </Tabs.List>
         </div>
 
-        {/* Results section — shown when run has been performed */}
-        {results && (
-          <>
-            {/* Risk matrix */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <RiskMatrix results={results} />
+        {/* Outer Tab 1: DDI Assessment */}
+        <Tabs.Content value="assessment" className="focus:outline-none">
+          <div className="max-w-screen-2xl mx-auto px-6 py-6 space-y-6">
+
+            {/* Compound + Concentration panel */}
+            <ConcPanel
+              inputs={inputs}
+              onChange={patch => setInputs(prev => ({ ...prev, ...patch }))}
+              onFillIuFields={handleFillIuFields}
+            />
+
+            {/* Error banner */}
+            {error && (
+              <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+                <span><strong>Error:</strong> {error}</span>
+              </div>
+            )}
+
+            {/* Inner A-F tab navigation + content */}
+            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+              {/* Inner tab bar */}
+              <div className="flex border-b border-slate-200 overflow-x-auto">
+                {TABS.map((tab, idx) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={clsx(
+                      'flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors',
+                      activeTab === tab.id
+                        ? 'border-amber-600 text-amber-700 bg-amber-50'
+                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
+                    )}
+                  >
+                    <span className="hidden sm:inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 mr-0.5">
+                      {String.fromCharCode(65 + idx)}
+                    </span>
+                    <span className="hidden md:block">{tab.label}</span>
+                    <span className="md:hidden">{tab.shortLabel}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Inner tab content */}
+              <div className="p-5">
+                {activeTab === 'substrate' && (
+                  <SubstrateTab
+                    pathways={inputs.substratePathways}
+                    onChange={v => setInputs({ substratePathways: v })}
+                  />
+                )}
+                {activeTab === 'reversible' && (
+                  <ReversibleTab
+                    inhibitors={inputs.reversibleInhibitors}
+                    onChange={v => setInputs({ reversibleInhibitors: v })}
+                  />
+                )}
+                {activeTab === 'tdi' && (
+                  <TDITab
+                    data={inputs.tdiData}
+                    onChange={v => setInputs({ tdiData: v })}
+                  />
+                )}
+                {activeTab === 'induction' && (
+                  <InductionTab
+                    data={inputs.induction}
+                    onChange={v => setInputs({ induction: v })}
+                  />
+                )}
+                {activeTab === 'transporters' && (
+                  <TransporterTab
+                    data={inputs.transporterInhibition}
+                    onChange={v => setInputs({ transporterInhibition: v })}
+                  />
+                )}
+                {activeTab === 'mechanistic' && (
+                  <MechanisticStaticTab
+                    msmEnzymeInputs={msmEnzymeInputs}
+                    setMsmEnzymeInputs={setMsmEnzymeInputs}
+                    msmResults={msmResults}
+                    setMsmResults={setMsmResults}
+                    ddiInputs={inputs}
+                    onImportFile={handleImportDDIFile}
+                  />
+                )}
+              </div>
             </div>
 
-            {/* Plots */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <DDIPlots results={results} />
-            </div>
+            {/* Risk matrix results — shown when run has been performed */}
+            {results && (
+              <>
+                {/* Risk matrix */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                  <RiskMatrix results={results} />
+                </div>
 
-            {/* Detail / rationale panel */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-4">Detailed Results &amp; Rationale</h3>
-              <ResultsDetail results={results} />
-            </div>
-          </>
-        )}
+                {/* Detail / rationale panel */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                  <h3 className="text-sm font-semibold text-slate-800 mb-4">Detailed Results &amp; Rationale</h3>
+                  <ResultsDetail results={results} />
+                </div>
+              </>
+            )}
 
-        {/* Pre-run placeholder */}
-        {!results && (
-          <div className="rounded-xl border border-slate-200 bg-white py-16 text-center">
-            <Activity size={32} className="mx-auto text-amber-300 mb-3" />
-            <p className="text-slate-500 text-sm mb-1">No results yet</p>
-            <p className="text-slate-400 text-xs">
-              Enter compound data in the tabs above and click <strong>Run DDI</strong>.
-              <br />
-              Use <strong>Load example</strong> to populate with Compound B demo data.
-            </p>
+            {/* Pre-run placeholder */}
+            {!results && (
+              <div className="rounded-xl border border-slate-200 bg-white py-16 text-center">
+                <Activity size={32} className="mx-auto text-amber-300 mb-3" />
+                <p className="text-slate-500 text-sm mb-1">No results yet</p>
+                <p className="text-slate-400 text-xs">
+                  Enter compound data in the tabs above and click <strong>Run DDI</strong>.
+                  <br />
+                  Use <strong>Load example</strong> to populate with Compound B demo data.
+                </p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </Tabs.Content>
+
+        {/* Outer Tab 2: Plots & Risk */}
+        <Tabs.Content value="plots" className="focus:outline-none">
+          <div className="max-w-screen-2xl mx-auto px-6 py-6">
+            {results ? (
+              <div className="space-y-6">
+                {/* DDI assessment plots */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                  <DDIPlots results={results} />
+                </div>
+
+                {/* Mechanistic static charts (Tab F) */}
+                {msmResults && msmResults.enzymeResults.length > 0 && (() => {
+                  const chartData = msmResults.enzymeResults.map(r => ({
+                    enzyme: r.enzyme,
+                    net: r.intermediates.net_activity_ratio,
+                    AUCR: r.intermediates.AUCR ?? 1,
+                    risk: r.risk,
+                  }));
+                  const RISK_COLORS_PLOT: Record<DDIRiskLevel, string> = {
+                    no_risk:       '#22c55e',
+                    potential_risk:'#eab308',
+                    risk:          '#f97316',
+                    high_risk:     '#ef4444',
+                  };
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+                      <h3 className="text-sm font-semibold text-slate-800">Mechanistic Static Model Charts</h3>
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <Plot
+                          data={[
+                            {
+                              type: 'bar',
+                              x: chartData.map(d => d.enzyme),
+                              y: chartData.map(d => d.net),
+                              name: 'Net Activity Ratio',
+                              marker: {
+                                color: chartData.map(d =>
+                                  d.net < 1 ? RISK_COLORS_PLOT.risk : RISK_COLORS_PLOT.no_risk,
+                                ),
+                              },
+                              text: chartData.map(d => d.net.toFixed(3)),
+                              textposition: 'outside' as const,
+                            },
+                            {
+                              type: 'scatter',
+                              mode: 'lines',
+                              x: chartData.map(d => d.enzyme),
+                              y: Array(chartData.length).fill(1.0),
+                              name: 'Baseline (1.0)',
+                              line: { color: '#64748b', dash: 'dash', width: 1.5 },
+                            },
+                          ]}
+                          layout={{
+                            title: { text: 'Net CYP Enzyme Activity Ratio', font: { size: 13, color: '#1e293b' } },
+                            xaxis: { tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
+                            yaxis: {
+                              title: { text: 'Net activity (fold_ind / R_rev × R_TDI)', font: { size: 11 } },
+                              gridcolor: '#f1f5f9',
+                              zeroline: true,
+                              zerolinecolor: '#cbd5e1',
+                            },
+                            plot_bgcolor: '#ffffff',
+                            paper_bgcolor: '#ffffff',
+                            margin: { t: 45, b: 55, l: 60, r: 20 },
+                            height: 280,
+                            showlegend: true,
+                            legend: { x: 1, xanchor: 'right', y: 1, font: { size: 10 } },
+                            font: { family: 'Inter, system-ui, sans-serif', size: 11 },
+                          }}
+                          config={{ displayModeBar: false, responsive: true }}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <Plot
+                          data={[
+                            {
+                              type: 'bar',
+                              x: chartData.map(d => d.enzyme),
+                              y: chartData.map(d => d.AUCR),
+                              name: 'AUCR',
+                              marker: {
+                                color: chartData.map(d => RISK_COLORS_PLOT[d.risk]),
+                              },
+                              text: chartData.map(d => d.AUCR.toFixed(2)),
+                              textposition: 'outside' as const,
+                            },
+                            {
+                              type: 'scatter',
+                              mode: 'lines',
+                              x: chartData.map(d => d.enzyme),
+                              y: Array(chartData.length).fill(1.25),
+                              name: 'Potential risk (1.25)',
+                              line: { color: '#eab308', dash: 'dash', width: 1.5 },
+                            },
+                            {
+                              type: 'scatter',
+                              mode: 'lines',
+                              x: chartData.map(d => d.enzyme),
+                              y: Array(chartData.length).fill(2.0),
+                              name: 'Risk (2.0)',
+                              line: { color: '#f97316', dash: 'dot', width: 1.5 },
+                            },
+                          ]}
+                          layout={{
+                            title: { text: 'Substrate AUCR', font: { size: 13, color: '#1e293b' } },
+                            xaxis: { tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
+                            yaxis: {
+                              title: { text: 'AUCR (victim AUC ratio)', font: { size: 11 } },
+                              gridcolor: '#f1f5f9',
+                              zeroline: false,
+                            },
+                            plot_bgcolor: '#ffffff',
+                            paper_bgcolor: '#ffffff',
+                            margin: { t: 45, b: 55, l: 60, r: 20 },
+                            height: 280,
+                            showlegend: true,
+                            legend: { x: 1, xanchor: 'right', y: 1, font: { size: 10 } },
+                            font: { family: 'Inter, system-ui, sans-serif', size: 11 },
+                          }}
+                          config={{ displayModeBar: false, responsive: true }}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white py-16 text-center">
+                <Activity size={32} className="mx-auto text-amber-300 mb-3" />
+                <p className="text-slate-500 text-sm mb-1">No plots available yet</p>
+                <p className="text-slate-400 text-xs">
+                  Switch to <strong>DDI Assessment</strong>, enter data, and click <strong>Run DDI</strong>.
+                </p>
+              </div>
+            )}
+          </div>
+        </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }
