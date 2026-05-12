@@ -1,6 +1,6 @@
 // =============================================================================
 // IVIVE MODULE — In Vitro / In Vivo Extrapolation
-// Full 3-panel UI: inputs | equations+models | results+plots
+// 2-tab UI: "Inputs & Results" | "Plots"
 // =============================================================================
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
@@ -19,7 +19,6 @@ import {
   RefreshCw,
   BookOpen,
   BarChart2,
-  Table2,
   Sliders,
   X,
 } from 'lucide-react';
@@ -56,6 +55,14 @@ import {
   NumberInput,
 } from '@/components/shared';
 import type { FormulaEntry } from '@/components/shared';
+
+// ---------------------------------------------------------------------------
+// Suppress unused-import warnings for types only used in sub-components
+// ---------------------------------------------------------------------------
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _IVIVESpeciesResult = IVIVESpeciesResult;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _IVIVEModelOutput = IVIVEModelOutput;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -589,6 +596,51 @@ function SpeciesRow({ row, onChange, onResetToDb }: SpeciesRowProps) {
   );
 }
 
+// ---- Species Table (full-width) ----
+
+interface SpeciesTableProps {
+  speciesData: IVIVESpeciesInputs[];
+  onSpeciesChange: (updated: IVIVESpeciesInputs) => void;
+  onResetSpeciesToDb: (species: Species) => void;
+}
+
+function SpeciesTable({ speciesData, onSpeciesChange, onResetSpeciesToDb }: SpeciesTableProps) {
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-4">
+      <div className="mb-2">
+        <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Species Physiology</h3>
+        <p className="text-xs text-slate-500 mt-0.5">Edit physiological parameters per species</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[520px]">
+          <thead>
+            <tr className="bg-slate-100 text-slate-600">
+              <th className="px-2 py-1.5 text-left font-medium w-6">✓</th>
+              <th className="px-2 py-1.5 text-left font-medium">Species</th>
+              <th className="px-2 py-1.5 text-left font-medium">BW (kg)</th>
+              <th className="px-2 py-1.5 text-left font-medium">LW (g)</th>
+              <th className="px-2 py-1.5 text-left font-medium">MPPGL</th>
+              <th className="px-2 py-1.5 text-left font-medium">HPGL</th>
+              <th className="px-2 py-1.5 text-left font-medium">Qh</th>
+              <th className="px-2 py-1.5 text-left font-medium w-8"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {speciesData.map(row => (
+              <SpeciesRow
+                key={row.species}
+                row={row}
+                onChange={onSpeciesChange}
+                onResetToDb={() => onResetSpeciesToDb(row.species)}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ---- Results Table ----
 
 interface ResultsTableProps {
@@ -951,7 +1003,7 @@ export default function IVIVEModule() {
 
   const [inputs, setInputs] = useState<IVIVEInputs>(buildDefaultInputs);
   const [results, setResults] = useState<IVIVEResults | null>(null);
-  const [activeTab, setActiveTab] = useState<'table' | 'plots' | 'sensitivity'>('table');
+  const [topTab, setTopTab] = useState<'inputs-results' | 'plots'>('inputs-results');
   const [showEquations, setShowEquations] = useState(false);
 
   // Batch state
@@ -1167,415 +1219,354 @@ export default function IVIVEModule() {
   const hasResults = results !== null && results.speciesResults.length > 0;
 
   return (
-    <div className="flex flex-col gap-0 h-full min-h-0">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600 shadow-sm">
-            <FlaskConical className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-900">IVIVE</h1>
-            <p className="text-xs text-slate-500">In Vitro / In Vivo Extrapolation of hepatic clearance</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Hidden file input for CSV/XLSX import */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0];
-              if (file) void handleImportCompounds(file);
-              // Reset so the same file can be re-imported
-              e.target.value = '';
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleDownloadTemplate}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            Download Template
-          </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            Import Compounds
-          </button>
-          <button
-            type="button"
-            onClick={handleExportInputs}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export Inputs
-          </button>
-          <button
-            type="button"
-            onClick={handleLoadExample}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <BookOpen className="h-3.5 w-3.5" />
-            Load Example
-          </button>
-          {hasResults && (
-            <>
-              <button
-                type="button"
-                onClick={handleExportCSV}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                <Download className="h-3.5 w-3.5" />
-                CSV
-              </button>
-              <button
-                type="button"
-                onClick={handleExportJSON}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                <Download className="h-3.5 w-3.5" />
-                JSON
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveRun}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-500 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors"
-              >
-                <Save className="h-3.5 w-3.5" />
-                Save Run
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* 3-column layout */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* ======== LEFT PANEL: Inputs ======== */}
-        <div className="w-72 shrink-0 flex flex-col border-r border-slate-200 bg-slate-50 overflow-y-auto">
-
-          {/* ---- Batch Import Panel (shown when records are loaded) ---- */}
-          {batchRecords.length > 0 && (
-            <div className="border-b border-amber-200 bg-amber-50">
-              <div className="px-4 py-2.5 flex items-center justify-between">
-                <span className="text-xs font-semibold text-amber-800">
-                  Batch Import — {batchRecords.length} compound{batchRecords.length !== 1 ? 's' : ''}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleClearBatch}
-                  className="rounded p-0.5 text-amber-500 hover:text-amber-700"
-                  title="Clear batch"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              {/* Compound picker */}
-              <div className="px-4 pb-2">
-                <label className="text-xs text-amber-700 font-medium">Load compound into inputs:</label>
-                <select
-                  value={selectedBatchCompound ?? ''}
-                  onChange={e => handleLoadBatchCompound(e.target.value)}
-                  className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                >
-                  {batchRecords.map(r => (
-                    <option key={r.compound_name} value={r.compound_name}>
-                      {r.compound_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Run All + Export Batch Results buttons */}
-              <div className="px-4 pb-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleRunBatch}
-                  disabled={batchRunning}
-                  className={clsx(
-                    'flex-1 inline-flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-semibold transition-colors',
-                    batchRunning
-                      ? 'cursor-not-allowed border-slate-300 bg-slate-100 text-slate-400'
-                      : 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700',
-                  )}
-                >
-                  <Play className="h-3 w-3" />
-                  {batchRunning ? 'Running…' : 'Run All'}
-                </button>
-                {batchResults.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleExportBatchResults}
-                    className="flex-1 inline-flex items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-                  >
-                    <Download className="h-3 w-3" />
-                    Export Results
-                  </button>
-                )}
-              </div>
-
-              {/* Compact batch summary table */}
-              {batchRecords.length > 0 && (
-                <div className="px-4 pb-3 overflow-x-auto">
-                  <table className="w-full text-xs border-collapse min-w-[220px]">
-                    <thead>
-                      <tr className="bg-amber-100 text-amber-800">
-                        <th className="px-2 py-1 text-left font-medium">Compound</th>
-                        <th className="px-2 py-1 text-right font-medium">CLint</th>
-                        <th className="px-2 py-1 text-right font-medium">fup</th>
-                        {batchResults.length > 0 && (
-                          <th className="px-2 py-1 text-right font-medium">CLh (WS)</th>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {batchRecords.map((rec, i) => {
-                        const bres = batchResults.find(r => r.compound_name === rec.compound_name);
-                        const humanSr = bres?.results.speciesResults.find(sr => sr.species === 'human');
-                        const wsMo = humanSr?.modelOutputs.find(m => m.model === 'well_stirred_no_binding');
-                        return (
-                          <tr
-                            key={rec.compound_name}
-                            className={clsx(
-                              'border-b border-amber-100 cursor-pointer hover:bg-amber-100',
-                              i % 2 === 0 ? 'bg-white' : 'bg-amber-50',
-                              selectedBatchCompound === rec.compound_name && 'ring-1 ring-inset ring-amber-400',
-                            )}
-                            onClick={() => handleLoadBatchCompound(rec.compound_name)}
-                          >
-                            <td className="px-2 py-1 font-medium text-slate-700 max-w-[80px] truncate" title={rec.compound_name}>
-                              {rec.compound_name}
-                            </td>
-                            <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.CLint_app}</td>
-                            <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.fup}</td>
-                            {batchResults.length > 0 && (
-                              <td className="px-2 py-1 text-right font-mono text-slate-600">
-                                {wsMo ? formatNumber(wsMo.CLh_predicted) : '—'}
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Import errors */}
-              {importErrors.length > 0 && (
-                <div className="px-4 pb-3">
-                  <ul className="space-y-0.5">
-                    {importErrors.map((err, i) => (
-                      <li key={i} className="text-xs text-red-600">
-                        {err}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+    <div className="min-h-full bg-slate-50">
+      {/* ---- Module header ---- */}
+      <div className="bg-white border-b border-slate-200 px-6 py-4">
+        <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600 shadow-sm">
+              <FlaskConical className="h-5 w-5 text-white" />
             </div>
-          )}
-
-          {/* Import errors shown even when no records loaded (e.g. parse failure) */}
-          {batchRecords.length === 0 && importErrors.length > 0 && (
-            <div className="border-b border-red-200 bg-red-50 px-4 py-2">
-              <ul className="space-y-0.5">
-                {importErrors.map((err, i) => (
-                  <li key={i} className="text-xs text-red-600">
-                    {err}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="px-4 py-3 border-b border-slate-200 bg-white">
-            <h2 className="text-sm font-semibold text-slate-800">Compound Inputs</h2>
-          </div>
-          <div className="p-4">
-            <CompoundPanel compound={inputs.compound} onChange={handleCompoundChange} />
-          </div>
-
-          {/* Species Table (scrollable section) */}
-          <div className="border-t border-slate-200">
-            <div className="px-4 py-3 bg-white">
-              <h2 className="text-sm font-semibold text-slate-800">Species Data</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Edit physiological parameters per species</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs min-w-[520px]">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-600">
-                    <th className="px-2 py-1.5 text-left font-medium w-6">✓</th>
-                    <th className="px-2 py-1.5 text-left font-medium">Species</th>
-                    <th className="px-2 py-1.5 text-left font-medium">BW (kg)</th>
-                    <th className="px-2 py-1.5 text-left font-medium">LW (g)</th>
-                    <th className="px-2 py-1.5 text-left font-medium">MPPGL</th>
-                    <th className="px-2 py-1.5 text-left font-medium">HPGL</th>
-                    <th className="px-2 py-1.5 text-left font-medium">Qh</th>
-                    <th className="px-2 py-1.5 text-left font-medium w-8"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {inputs.speciesData.map(row => (
-                    <SpeciesRow
-                      key={row.species}
-                      row={row}
-                      onChange={handleSpeciesChange}
-                      onResetToDb={() => handleResetSpeciesToDb(row.species)}
-                    />
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">IVIVE</h1>
+              <p className="text-xs text-slate-500">In Vitro / In Vivo Extrapolation of hepatic clearance</p>
             </div>
           </div>
-        </div>
 
-        {/* ======== MIDDLE PANEL: Equations + Models ======== */}
-        <div className="w-72 shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-y-auto">
-          {/* Equations accordion */}
-          <div className="border-b border-slate-200">
+          <div className="flex items-center gap-2">
+            {/* Hidden file input for CSV/XLSX import */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) void handleImportCompounds(file);
+                e.target.value = '';
+              }}
+            />
             <button
               type="button"
-              onClick={() => setShowEquations(v => !v)}
-              className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
+              onClick={handleDownloadTemplate}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
             >
-              <span className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-teal-600" />
-                Model Equations
-              </span>
-              {showEquations ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              <FileDown className="h-3.5 w-3.5" />
+              Download Template
             </button>
-            {showEquations && (
-              <div className="px-3 pb-3">
-                <EquationPanel formulas={IVIVE_FORMULAS} />
-              </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Import Compounds
+            </button>
+            <button
+              type="button"
+              onClick={handleExportInputs}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export Inputs
+            </button>
+            <button
+              type="button"
+              onClick={handleLoadExample}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              Load Example
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </button>
+            {hasResults && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportJSON}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveRun}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-teal-500 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  Save Run
+                </button>
+              </>
             )}
-          </div>
-
-          {/* Model selection */}
-          <div className="px-4 py-3 border-b border-slate-200">
-            <h2 className="text-sm font-semibold text-slate-800 mb-3">IVIVE Models</h2>
-            <div className="space-y-2.5">
-              {ALL_MODELS.map(m => {
-                const cfg = IVIVE_MODEL_CONFIGS[m];
-                const checked = inputs.modelsSelected.includes(m);
-                return (
-                  <label key={m} className="flex items-start gap-2.5 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={e => handleModelToggle(m, e.target.checked)}
-                      className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-                    />
-                    <div>
-                      <p className="text-xs font-medium text-slate-700 group-hover:text-teal-700 leading-tight">{cfg.label}</p>
-                      <p className="text-xs text-slate-400 leading-tight mt-0.5">{cfg.description.slice(0, 80)}…</p>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div className="p-4 space-y-2">
             <button
               type="button"
               onClick={handleRun}
               disabled={iviveRunning || inputs.modelsSelected.length === 0}
               className={clsx(
-                'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold',
-                'transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-1',
+                'inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors',
+                'focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-1',
                 iviveRunning || inputs.modelsSelected.length === 0
                   ? 'cursor-not-allowed bg-slate-200 text-slate-500'
                   : 'bg-teal-600 text-white hover:bg-teal-700 active:bg-teal-800',
               )}
             >
-              <Play className="h-4 w-4" />
+              <Play className="h-3.5 w-3.5" />
               {iviveRunning ? 'Running…' : 'Run IVIVE'}
             </button>
-
-            <button
-              type="button"
-              onClick={handleReset}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Reset All
-            </button>
           </div>
+        </div>
+      </div>
 
-          {/* Warnings */}
-          {allWarnings.length > 0 && (
-            <div className="px-4 pb-4">
-              <WarningBox warnings={allWarnings} title="Computation Notices" collapsible />
-            </div>
-          )}
+      {/* ---- 2-tab layout ---- */}
+      <Tabs.Root
+        value={topTab}
+        onValueChange={v => setTopTab(v as typeof topTab)}
+        className="max-w-screen-2xl mx-auto"
+      >
+        {/* Tab list bar */}
+        <div className="bg-white border-b border-slate-200 px-4">
+          <Tabs.List className="flex gap-0" aria-label="IVIVE sections">
+            <Tabs.Trigger
+              value="inputs-results"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-teal-700 data-[state=active]:border-teal-600 focus:outline-none"
+            >
+              Inputs &amp; Results
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="plots"
+              className="px-5 py-3 text-sm font-medium text-slate-500 border-b-2 border-transparent hover:text-slate-800 hover:border-slate-300 transition-colors data-[state=active]:text-teal-700 data-[state=active]:border-teal-600 focus:outline-none"
+            >
+              <span className="flex items-center gap-1.5">
+                <BarChart2 className="h-3.5 w-3.5" />
+                Plots
+              </span>
+            </Tabs.Trigger>
+          </Tabs.List>
         </div>
 
-        {/* ======== RIGHT PANEL: Results ======== */}
-        <div className="flex-1 min-w-0 flex flex-col bg-white overflow-hidden">
-          {!hasResults ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center p-12">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-teal-50 shadow-sm">
-                <FlaskConical className="h-8 w-8 text-teal-400" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-slate-700">No Results Yet</h3>
-                <p className="text-sm text-slate-400 mt-1">
-                  Configure inputs and click <strong>Run IVIVE</strong> to see predictions.
-                </p>
-                <p className="text-xs text-slate-400 mt-2">
-                  Or use <strong>Load Example</strong> to pre-fill with Compound A sample data.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <Tabs.Root
-              value={activeTab}
-              onValueChange={v => setActiveTab(v as typeof activeTab)}
-              className="flex flex-col flex-1 min-h-0"
-            >
-              {/* Tab list */}
-              <Tabs.List className="flex border-b border-slate-200 px-4 bg-white shrink-0">
-                {[
-                  { id: 'table',       label: 'Results Table', Icon: Table2 },
-                  { id: 'plots',       label: 'Plots',         Icon: BarChart2 },
-                  { id: 'sensitivity', label: 'Sensitivity',   Icon: Sliders },
-                ].map(({ id, label, Icon }) => (
-                  <Tabs.Trigger
-                    key={id}
-                    value={id}
-                    className={clsx(
-                      'flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors',
-                      activeTab === id
-                        ? 'border-teal-600 text-teal-700'
-                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {label}
-                  </Tabs.Trigger>
-                ))}
-              </Tabs.List>
+        {/* ===== Tab 1: Inputs & Results ===== */}
+        <Tabs.Content value="inputs-results" className="p-4 space-y-4 focus:outline-none">
 
-              {/* Tab content */}
-              <div className="flex-1 overflow-y-auto">
-                <Tabs.Content value="table" className="p-4 focus:outline-none">
+          {/* Full-width Species physiology table */}
+          <SpeciesTable
+            speciesData={inputs.speciesData}
+            onSpeciesChange={handleSpeciesChange}
+            onResetSpeciesToDb={handleResetSpeciesToDb}
+          />
+
+          {/* 2-column grid */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
+            {/* Left column: Compound inputs + Model selection + Equations + Batch */}
+            <div className="space-y-4">
+
+              {/* Compound inputs */}
+              <div className="bg-white rounded-lg border border-slate-200 p-4">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Compound Inputs</h3>
+                <CompoundPanel compound={inputs.compound} onChange={handleCompoundChange} />
+              </div>
+
+              {/* Model selection */}
+              <div className="bg-white rounded-lg border border-slate-200 p-4">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">IVIVE Models</h3>
+                <div className="space-y-2.5">
+                  {ALL_MODELS.map(m => {
+                    const cfg = IVIVE_MODEL_CONFIGS[m];
+                    const checked = inputs.modelsSelected.includes(m);
+                    return (
+                      <label key={m} className="flex items-start gap-2.5 cursor-pointer group">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={e => handleModelToggle(m, e.target.checked)}
+                          className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <p className="text-xs font-medium text-slate-700 group-hover:text-teal-700 leading-tight">{cfg.label}</p>
+                          <p className="text-xs text-slate-400 leading-tight mt-0.5">{cfg.description.slice(0, 80)}…</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Equations accordion */}
+              <div className="bg-white rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowEquations(v => !v)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors rounded-lg"
+                >
+                  <span className="flex items-center gap-2">
+                    <BookOpen className="h-4 w-4 text-teal-600" />
+                    Model Equations
+                  </span>
+                  {showEquations ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {showEquations && (
+                  <div className="px-4 pb-4 border-t border-slate-100">
+                    <EquationPanel formulas={IVIVE_FORMULAS} />
+                  </div>
+                )}
+              </div>
+
+              {/* Batch import panel (shown when records are loaded) */}
+              {batchRecords.length > 0 && (
+                <div className="bg-amber-50 rounded-lg border border-amber-200">
+                  <div className="px-4 py-2.5 flex items-center justify-between border-b border-amber-200">
+                    <span className="text-xs font-semibold text-amber-800">
+                      Batch Import — {batchRecords.length} compound{batchRecords.length !== 1 ? 's' : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleClearBatch}
+                      className="rounded p-0.5 text-amber-500 hover:text-amber-700"
+                      title="Clear batch"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="p-4 space-y-3">
+                    {/* Compound picker */}
+                    <div>
+                      <label className="text-xs text-amber-700 font-medium">Load compound into inputs:</label>
+                      <select
+                        value={selectedBatchCompound ?? ''}
+                        onChange={e => handleLoadBatchCompound(e.target.value)}
+                        className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        {batchRecords.map(r => (
+                          <option key={r.compound_name} value={r.compound_name}>
+                            {r.compound_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Run All + Export Batch Results */}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunBatch}
+                        disabled={batchRunning}
+                        className={clsx(
+                          'flex-1 inline-flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-semibold transition-colors',
+                          batchRunning
+                            ? 'cursor-not-allowed border-slate-300 bg-slate-100 text-slate-400'
+                            : 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700',
+                        )}
+                      >
+                        <Play className="h-3 w-3" />
+                        {batchRunning ? 'Running…' : 'Run All'}
+                      </button>
+                      {batchResults.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleExportBatchResults}
+                          className="flex-1 inline-flex items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                        >
+                          <Download className="h-3 w-3" />
+                          Export Results
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Compact batch summary table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse min-w-[220px]">
+                        <thead>
+                          <tr className="bg-amber-100 text-amber-800">
+                            <th className="px-2 py-1 text-left font-medium">Compound</th>
+                            <th className="px-2 py-1 text-right font-medium">CLint</th>
+                            <th className="px-2 py-1 text-right font-medium">fup</th>
+                            {batchResults.length > 0 && (
+                              <th className="px-2 py-1 text-right font-medium">CLh (WS)</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchRecords.map((rec, i) => {
+                            const bres = batchResults.find(r => r.compound_name === rec.compound_name);
+                            const humanSr = bres?.results.speciesResults.find(sr => sr.species === 'human');
+                            const wsMo = humanSr?.modelOutputs.find(m => m.model === 'well_stirred_no_binding');
+                            return (
+                              <tr
+                                key={rec.compound_name}
+                                className={clsx(
+                                  'border-b border-amber-100 cursor-pointer hover:bg-amber-100',
+                                  i % 2 === 0 ? 'bg-white' : 'bg-amber-50',
+                                  selectedBatchCompound === rec.compound_name && 'ring-1 ring-inset ring-amber-400',
+                                )}
+                                onClick={() => handleLoadBatchCompound(rec.compound_name)}
+                              >
+                                <td className="px-2 py-1 font-medium text-slate-700 max-w-[80px] truncate" title={rec.compound_name}>
+                                  {rec.compound_name}
+                                </td>
+                                <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.CLint_app}</td>
+                                <td className="px-2 py-1 text-right font-mono text-slate-600">{rec.fup}</td>
+                                {batchResults.length > 0 && (
+                                  <td className="px-2 py-1 text-right font-mono text-slate-600">
+                                    {wsMo ? formatNumber(wsMo.CLh_predicted) : '—'}
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Import errors */}
+                    {importErrors.length > 0 && (
+                      <ul className="space-y-0.5">
+                        {importErrors.map((err, i) => (
+                          <li key={i} className="text-xs text-red-600">{err}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Import errors shown even when no records loaded (e.g. parse failure) */}
+              {batchRecords.length === 0 && importErrors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                  <ul className="space-y-0.5">
+                    {importErrors.map((err, i) => (
+                      <li key={i} className="text-xs text-red-600">{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* Right column: Results table or empty state */}
+            <div>
+              {hasResults && results ? (
+                <div className="space-y-4">
                   {/* Summary cards */}
                   {results.humanResult && (
-                    <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       {results.humanResult.modelOutputs.map(mo => (
-                        <div key={mo.model} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div key={mo.model} className="rounded-lg border border-slate-200 bg-white p-3">
                           <p className="text-xs font-medium text-slate-500 leading-tight mb-1">{mo.label}</p>
                           <p className="text-lg font-bold text-teal-700 font-mono">{formatNumber(mo.CLh_predicted)}</p>
                           <p className="text-xs text-slate-400">mL/min (human)</p>
@@ -1586,21 +1577,57 @@ export default function IVIVEModule() {
                       ))}
                     </div>
                   )}
-                  <ResultsTable results={results} modelsSelected={inputs.modelsSelected} />
-                </Tabs.Content>
 
-                <Tabs.Content value="plots" className="p-4 focus:outline-none">
-                  <PlotsPanel results={results} modelsSelected={inputs.modelsSelected} />
-                </Tabs.Content>
+                  {/* Results table */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-4">
+                    <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Results</h3>
+                    <ResultsTable results={results} modelsSelected={inputs.modelsSelected} />
+                  </div>
 
-                <Tabs.Content value="sensitivity" className="p-4 focus:outline-none">
-                  <SensitivityPanel inputs={inputs} results={results} />
-                </Tabs.Content>
-              </div>
-            </Tabs.Root>
+                  {/* Sensitivity analysis */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-4">
+                    <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <Sliders className="h-3.5 w-3.5 text-teal-600" />
+                      Sensitivity Analysis
+                    </h3>
+                    <SensitivityPanel inputs={inputs} results={results} />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-slate-400 bg-white rounded-lg border border-dashed border-slate-300">
+                  <FlaskConical className="h-10 w-10 mb-2 text-slate-300" />
+                  <p className="text-sm font-medium">Results will appear here</p>
+                  <p className="text-xs mt-1">
+                    Click <strong>Run IVIVE</strong> to see predictions
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Warnings below grid */}
+          {allWarnings.length > 0 && (
+            <WarningBox warnings={allWarnings} title="Computation Notices" collapsible />
           )}
-        </div>
-      </div>
+        </Tabs.Content>
+
+        {/* ===== Tab 2: Plots ===== */}
+        <Tabs.Content value="plots" className="p-4 focus:outline-none">
+          <div className="bg-white rounded-lg border border-slate-200 p-4">
+            {hasResults && results ? (
+              <PlotsPanel results={results} modelsSelected={inputs.modelsSelected} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-96 text-slate-400">
+                <BarChart2 className="h-12 w-12 mb-3 text-slate-300" />
+                <p className="text-sm font-medium">Graphs will appear after running the analysis</p>
+                <p className="text-xs mt-1">
+                  Configure inputs and click <strong>Run IVIVE</strong>
+                </p>
+              </div>
+            )}
+          </div>
+        </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }
