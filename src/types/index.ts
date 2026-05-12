@@ -420,8 +420,9 @@ export interface DDIInputs {
   // transporter
   transporterInhibition: TransporterInhibitionData[];
   // concentration data
-  Cmax_total?: number;      // µM
-  Cmax_unbound?: number;    // µM
+  Cmax_total?: number;      // µM total plasma Cmax
+  Cmax_unbound?: number;    // µM unbound Cmax (can be entered directly or derived from fup × Cmax_total)
+  fup?: number;             // unbound fraction in plasma (0–1); used to auto-derive Cmax_unbound
   dose_mg?: number;
   bioavailability_F?: number;
   dosingInterval_h?: number;

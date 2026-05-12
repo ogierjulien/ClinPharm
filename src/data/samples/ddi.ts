@@ -109,8 +109,9 @@ export const DDI_SAMPLE: DDIInputs = {
   // -------------------------------------------------------------------------
   // Concentration data
   // -------------------------------------------------------------------------
-  Cmax_total: 6.25,               // µM total plasma Cmax (fup=0.08 → unbound 0.5 µM)
-  Cmax_unbound: 0.5,              // µM
+  Cmax_total: 6.25,               // µM total plasma Cmax
+  fup: 0.08,                      // unbound fraction → Cmax_unbound = 6.25 × 0.08 = 0.5 µM
+  Cmax_unbound: 0.5,              // µM (= Cmax_total × fup)
   dose_mg: 200,
   bioavailability_F: 0.55,
   dosingInterval_h: 24,

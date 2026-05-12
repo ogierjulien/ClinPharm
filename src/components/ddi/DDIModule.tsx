@@ -178,6 +178,7 @@ function blankInputs(): DDIInputs {
     transporterInhibition: blankTransporters(),
     Cmax_total: undefined,
     Cmax_unbound: undefined,
+    fup: undefined,
     dose_mg: undefined,
     bioavailability_F: undefined,
     dosingInterval_h: undefined,
@@ -226,6 +227,7 @@ function sampleToInputs(sample: DDIInputs): DDIInputs {
     compound: sample.compound,
     Cmax_total:        sample.Cmax_total,
     Cmax_unbound:      sample.Cmax_unbound,
+    fup:               sample.fup,
     dose_mg:           sample.dose_mg,
     bioavailability_F: sample.bioavailability_F,
     dosingInterval_h:  sample.dosingInterval_h,
@@ -1872,12 +1874,47 @@ function ResultsDetail({ results }: ResultsDetailProps) {
 interface ConcPanelProps {
   inputs: DDIInputs;
   onChange: (patch: Partial<DDIInputs>) => void;
+  onFillIuFields?: () => void;
 }
 
-function ConcPanel({ inputs, onChange }: ConcPanelProps) {
+function ConcPanel({ inputs, onChange, onFillIuFields }: ConcPanelProps) {
+  // Derived unbound Cmax when both fup and Cmax_total are provided
+  const derivedCmaxUnbound =
+    inputs.fup !== undefined && inputs.Cmax_total !== undefined
+      ? parseFloat((inputs.fup * inputs.Cmax_total).toFixed(4))
+      : undefined;
+
+  // When fup or Cmax_total changes, auto-set Cmax_unbound if derivable
+  function handleFupChange(v: number | undefined) {
+    const patch: Partial<DDIInputs> = { fup: v };
+    if (v !== undefined && inputs.Cmax_total !== undefined) {
+      patch.Cmax_unbound = parseFloat((v * inputs.Cmax_total).toFixed(4));
+    }
+    onChange(patch);
+  }
+
+  function handleCmaxTotalChange(v: number | undefined) {
+    const patch: Partial<DDIInputs> = { Cmax_total: v };
+    if (v !== undefined && inputs.fup !== undefined) {
+      patch.Cmax_unbound = parseFloat((inputs.fup * v).toFixed(4));
+    }
+    onChange(patch);
+  }
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <h3 className="text-sm font-semibold text-slate-700 mb-3">Compound &amp; Concentration Data</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-700">Compound &amp; Concentration Data</h3>
+        {onFillIuFields && inputs.Cmax_unbound !== undefined && (
+          <button
+            onClick={onFillIuFields}
+            className="text-xs px-2 py-1 rounded bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors"
+            title="Copy Cmax_unbound into all empty Iu_max fields across inhibitor, TDI, and induction tabs"
+          >
+            Fill Iu fields from Cmax_unbound
+          </button>
+        )}
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
         {/* Compound name */}
         <div className="flex flex-col gap-1">
@@ -1891,9 +1928,73 @@ function ConcPanel({ inputs, onChange }: ConcPanelProps) {
           />
         </div>
 
+        {/* Cmax_total with its own handler */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-slate-600">Cmax_total (µM)</label>
+          <input
+            type="number"
+            className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            value={inputs.Cmax_total ?? ''}
+            onChange={e => {
+              const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+              handleCmaxTotalChange(isNaN(v as number) ? undefined : v);
+            }}
+            placeholder="—"
+            min={0}
+            step="any"
+          />
+        </div>
+
+        {/* fup — key new field */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-slate-600">
+            fu (fup)
+            <span className="ml-1 text-slate-400 font-normal">0–1</span>
+          </label>
+          <input
+            type="number"
+            className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            value={inputs.fup ?? ''}
+            onChange={e => {
+              const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+              handleFupChange(isNaN(v as number) ? undefined : v);
+            }}
+            placeholder="e.g. 0.08"
+            min={0}
+            max={1}
+            step="0.001"
+          />
+        </div>
+
+        {/* Cmax_unbound — shows derived value or manual entry */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-slate-600">
+            Cmax_unbound (µM)
+            {derivedCmaxUnbound !== undefined && (
+              <span className="ml-1 text-amber-600 font-normal">(auto)</span>
+            )}
+          </label>
+          <input
+            type="number"
+            className={clsx(
+              'rounded border px-2 py-1.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500',
+              derivedCmaxUnbound !== undefined
+                ? 'border-amber-300 bg-amber-50'
+                : 'border-slate-200 bg-white',
+            )}
+            value={inputs.Cmax_unbound ?? ''}
+            onChange={e => {
+              const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+              onChange({ Cmax_unbound: isNaN(v as number) ? undefined : v });
+            }}
+            placeholder={derivedCmaxUnbound !== undefined ? String(derivedCmaxUnbound) : '—'}
+            min={0}
+            step="any"
+          />
+        </div>
+
+        {/* Remaining numeric fields */}
         {[
-          { label: 'Cmax_total (µM)', key: 'Cmax_total' as keyof DDIInputs },
-          { label: 'Cmax_unbound (µM)', key: 'Cmax_unbound' as keyof DDIInputs },
           { label: 'Dose (mg)', key: 'dose_mg' as keyof DDIInputs },
           { label: 'Bioavailability F', key: 'bioavailability_F' as keyof DDIInputs },
           { label: 'Dosing interval (h)', key: 'dosingInterval_h' as keyof DDIInputs },
@@ -1930,6 +2031,14 @@ function ConcPanel({ inputs, onChange }: ConcPanelProps) {
           </label>
         </div>
       </div>
+
+      {/* Derivation hint */}
+      {derivedCmaxUnbound !== undefined && (
+        <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1 border border-amber-200">
+          Cmax_unbound auto-derived: {inputs.Cmax_total} µM × {inputs.fup} = <strong>{derivedCmaxUnbound} µM</strong>.
+          Edit the field above to override.
+        </p>
+      )}
     </div>
   );
 }
@@ -2073,6 +2182,32 @@ export default function DDIModule() {
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+
+  // Propagate Cmax_unbound to all empty Iu_max fields across inhibitor/TDI/induction tabs
+  const handleFillIuFields = useCallback(() => {
+    const iu = inputs.Cmax_unbound;
+    if (iu === undefined) return;
+    setInputs(prev => ({
+      ...prev,
+      reversibleInhibitors: prev.reversibleInhibitors.map(r => ({
+        ...r,
+        Iu_max: r.Iu_max ?? iu,
+        Iu_inlet: r.Iu_inlet ?? iu,
+      })),
+      tdiData: prev.tdiData.map(t => ({
+        ...t,
+        Iu_max: t.Iu_max === 0 || t.Iu_max === undefined ? iu : t.Iu_max,
+      })),
+      induction: prev.induction.map(ind => ({
+        ...ind,
+        Iu_max: ind.Iu_max === 0 || ind.Iu_max === undefined ? iu : ind.Iu_max,
+      })),
+      transporterInhibition: prev.transporterInhibition.map(tr => ({
+        ...tr,
+        Iu_systemic: tr.Iu_systemic ?? iu,
+      })),
+    }));
+  }, [inputs.Cmax_unbound]);
 
   const handleImportDDIFile = useCallback(async (file: File) => {
     try {
@@ -2246,6 +2381,7 @@ export default function DDIModule() {
         <ConcPanel
           inputs={inputs}
           onChange={patch => setInputs(prev => ({ ...prev, ...patch }))}
+          onFillIuFields={handleFillIuFields}
         />
 
         {/* Error banner */}
