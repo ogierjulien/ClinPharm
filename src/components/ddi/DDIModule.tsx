@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
+// @ts-ignore
 import Plot from 'react-plotly.js';
 import {
   Play,
@@ -10,6 +11,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Upload,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -25,15 +27,19 @@ import type {
   TransporterInhibitionData,
   DDIRiskLevel,
   Warning,
+  MechanisticStaticEnzymeInputs,
+  MechanisticStaticResults,
 } from '@/types';
 
 import { useAppStore } from '@/store';
 import { runDDI } from '@/engine/ddi';
+import { computeMechanisticStatic } from '@/engine/ddi/mechanisticStatic';
 import { DDI_SAMPLE } from '@/data/samples/ddi';
 import { PHYSIOLOGY_DB } from '@/data/physiology';
 import { createRunMetadata } from '@/utils/session';
 import { exportJSON } from '@/utils/export';
 import { WarningBox, RiskBadge } from '@/components/shared';
+import { ddiCSVTemplate, parseDDIBatchCSV, parseFile } from '@/utils/csvImport';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,7 +83,7 @@ const MECHANISM_OPTIONS = [
 // Tab definitions
 // ---------------------------------------------------------------------------
 
-type TabId = 'substrate' | 'reversible' | 'tdi' | 'induction' | 'transporters';
+type TabId = 'substrate' | 'reversible' | 'tdi' | 'induction' | 'transporters' | 'mechanistic';
 
 const TABS: { id: TabId; label: string; shortLabel: string }[] = [
   { id: 'substrate',    label: 'Substrate Assessment',       shortLabel: 'Substrate' },
@@ -85,6 +91,7 @@ const TABS: { id: TabId; label: string; shortLabel: string }[] = [
   { id: 'tdi',          label: 'Time-Dependent Inhibition',  shortLabel: 'TDI' },
   { id: 'induction',    label: 'Induction',                  shortLabel: 'Induction' },
   { id: 'transporters', label: 'Transporters',               shortLabel: 'Transport.' },
+  { id: 'mechanistic',  label: 'Mechanistic Static',         shortLabel: 'Mech. Static' },
 ];
 
 // ---------------------------------------------------------------------------

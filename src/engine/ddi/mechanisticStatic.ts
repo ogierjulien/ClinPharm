@@ -243,23 +243,28 @@ function computeEnzymeResult(enz: MechanisticStaticEnzymeInputs): MechanisticSta
 
   // --- AUCR ---
   // AUCR = 1 / (fm × net_activity + (1 - fm))
-  // Derived from: AUC_inhibited/AUC_control = 1 / [fm/net_activity_ratio + (1-fm)]
-  // Note the AUCR formula uses the inverse of net_activity for the fm-weighted term:
-  //   With only inhibition (net_activity < 1): enzyme activity reduced, so substrate exposure increases
-  //   Substrate AUCR = 1 / [fm × (1/net_activity_factor) ... ] — but the EMA/FDA formula
-  //   is expressed as AUCR = 1 / [fm × (1/fold_change) + (1-fm)] where fold_change = net_activity.
   //
-  //   Equivalently: AUCR = 1 / [fm / (R_rev × R_TDI / fold_induction) + (1-fm)]
-  //   Which simplifies to AUCR = 1 / [fm × (R_rev × R_TDI) / fold_induction + (1-fm)]
-  //   = 1 / [fm / net_activity_ratio + (1-fm)]
+  // Where net_activity = fold_induction / (R_rev × R_TDI) ∈ (0, ∞)
+  //   • net_activity < 1: inhibition dominant → denominator < 1 → AUCR > 1 (substrate AUC increases)
+  //   • net_activity > 1: induction dominant → denominator > 1 → AUCR < 1 (substrate AUC decreases)
+  //   • net_activity = 1: no interaction → AUCR = 1
+  //
+  // Derived from: substrate AUCR = 1 / [fm × (remaining enzyme fraction) + (1 - fm)]
+  // where remaining enzyme fraction = net_activity = fold_induction / (R_rev × R_TDI)
+  // Reference: FDA (2020) Drug Interaction Studies Guidance
 
   const fm = enz.fm;
   let AUCR: number | undefined;
 
   if (fm > 0) {
-    // Clamp net_activity_ratio to avoid division by zero
-    const netClamp = Math.max(net_activity_ratio, 1e-10);
-    AUCR = 1 / (fm / netClamp + (1 - fm));
+    // AUCR = 1 / (fm × net_activity + (1 - fm))
+    // net_activity = fold_induction / (R_rev × R_TDI) ∈ (0, ∞)
+    //   • net < 1: inhibition dominant → denominator < 1 → AUCR > 1 (substrate AUC increases)
+    //   • net > 1: induction dominant → denominator > 1 → AUCR < 1 (substrate AUC decreases)
+    // Reference: FDA (2020) Drug Interaction Studies Guidance, Eq. 1-3
+    const denominator = fm * net_activity_ratio + (1 - fm);
+    // Guard against pathological zero denominator (would require fm=1 and net=0)
+    AUCR = denominator > 0 ? 1 / denominator : Infinity;
   } else {
     // fm = 0 → no metabolic contribution → AUCR = 1.0
     AUCR = 1.0;
