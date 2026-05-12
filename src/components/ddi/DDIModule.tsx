@@ -839,6 +839,613 @@ function TransporterTab({ data, onChange }: TransporterTabProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab F — Mechanistic Static Models
+// ---------------------------------------------------------------------------
+
+const MSM_DEFAULT_ENZYMES: CYPEnzyme[] = ['CYP3A4', 'CYP2D6', 'CYP1A2', 'CYP2C9'];
+
+function defaultMsmEnzymeInputs(): MechanisticStaticEnzymeInputs[] {
+  return MSM_DEFAULT_ENZYMES.map(enzyme => ({
+    enzyme,
+    fm: 0,
+    useReversible: false,
+    useTDI: false,
+    useInduction: false,
+    kdeg: HUMAN_KDEG[enzyme],
+  }));
+}
+
+const RISK_COLORS_MSM: Record<DDIRiskLevel, string> = {
+  no_risk:       '#22c55e',
+  potential_risk:'#eab308',
+  risk:          '#f97316',
+  high_risk:     '#ef4444',
+};
+
+interface MechanisticStaticTabProps {
+  msmEnzymeInputs: MechanisticStaticEnzymeInputs[];
+  setMsmEnzymeInputs: React.Dispatch<React.SetStateAction<MechanisticStaticEnzymeInputs[]>>;
+  msmResults: MechanisticStaticResults | null;
+  setMsmResults: React.Dispatch<React.SetStateAction<MechanisticStaticResults | null>>;
+  ddiInputs: DDIInputs;
+  onImportFile: (file: File) => void;
+}
+
+function MechanisticStaticTab({
+  msmEnzymeInputs,
+  setMsmEnzymeInputs,
+  msmResults,
+  setMsmResults,
+  ddiInputs,
+  onImportFile,
+}: MechanisticStaticTabProps) {
+  const importRef = useRef<HTMLInputElement>(null);
+
+  function updateEnzyme(idx: number, patch: Partial<MechanisticStaticEnzymeInputs>) {
+    setMsmEnzymeInputs(prev => prev.map((e, i) => i === idx ? { ...e, ...patch } : e));
+  }
+
+  function handleRun() {
+    const validEnzymes = msmEnzymeInputs.filter(
+      e => e.useReversible || e.useTDI || e.useInduction,
+    );
+    if (validEnzymes.length === 0) {
+      setMsmResults({
+        enzymeResults: [],
+        overallRisk: 'no_risk',
+        warnings: [{
+          code: 'MSM_NO_MECHANISMS',
+          message: 'No mechanisms enabled. Select at least one mechanism checkbox per enzyme.',
+          severity: 'caution',
+        }],
+      });
+      return;
+    }
+    const inputs = {
+      compound: ddiInputs.compound,
+      template: 'FDA_2020' as const,
+      enzymes: msmEnzymeInputs.filter(e => e.fm > 0 || e.useReversible || e.useTDI || e.useInduction),
+    };
+    const results = computeMechanisticStatic(inputs);
+    setMsmResults(results);
+  }
+
+  function handleDownloadTemplate() {
+    const csv = ddiCSVTemplate();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ddi-batch-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImportChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    onImportFile(file);
+    if (importRef.current) importRef.current.value = '';
+  }
+
+  function handleExportCurrent() {
+    // Export current DDI inputs as CSV with the batch format
+    const rows: string[] = [
+      'compound_name,enzyme_or_transporter,pathway_type,fm,Ki_uM,IC50_uM,kinact_per_h,KI_uM,Emax_fold,EC50_uM,concentration_metric_type,concentration_value_uM,unbound_fraction,substrate_flag,perpetrator_flag,comments',
+    ];
+    const name = ddiInputs.compound.name || 'Compound';
+    for (const sp of ddiInputs.substratePathways.filter(p => p.fm > 0)) {
+      rows.push(`${name},${sp.enzyme},substrate,${sp.fm},,,,,,,,,,true,false,`);
+    }
+    for (const r of ddiInputs.reversibleInhibitors.filter(r => r.Ki !== undefined || r.IC50 !== undefined)) {
+      const Ki = r.Ki ?? '';
+      const IC50 = r.IC50 ?? '';
+      const Iu = r.Iu_max ?? '';
+      rows.push(`${name},${r.enzyme},reversible_inhibitor,,${Ki},${IC50},,,,Iu_max,${Iu},1.0,,true,`);
+    }
+    for (const t of ddiInputs.tdiData.filter(t => t.kinact > 0)) {
+      rows.push(`${name},${t.enzyme},TDI,,,,${t.kinact},${t.KI},,,Iu_max,${t.Iu_max},1.0,,true,`);
+    }
+    for (const ind of ddiInputs.induction.filter(i => i.Emax > 0)) {
+      rows.push(`${name},${ind.enzyme},inducer,,,,,,,${ind.Emax},${ind.EC50},Iu_max,${ind.Iu_max},1.0,,true,`);
+    }
+    const csv = rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ddi-export-${name}-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Pre-populate MSM fields from existing DDI tab data
+  function handlePrefillFromDDI() {
+    setMsmEnzymeInputs(prev => prev.map(enz => {
+      let next = { ...enz };
+      // From reversible inhibitors
+      const rev = ddiInputs.reversibleInhibitors.find(r => r.enzyme === enz.enzyme);
+      if (rev && (rev.Ki !== undefined || rev.IC50 !== undefined)) {
+        next = {
+          ...next,
+          useReversible: true,
+          Ki_rev: rev.Ki ?? (rev.IC50 !== undefined ? rev.IC50 / 2 : undefined),
+          Iu_rev: rev.Iu_max,
+        };
+      }
+      // From TDI
+      const tdi = ddiInputs.tdiData.find(t => t.enzyme === enz.enzyme);
+      if (tdi && tdi.kinact > 0) {
+        next = {
+          ...next,
+          useTDI: true,
+          kinact: tdi.kinact,
+          KI_tdi: tdi.KI,
+          Iu_tdi: tdi.Iu_max,
+          kdeg: tdi.kdeg,
+        };
+      }
+      // From induction
+      const ind = ddiInputs.induction.find(i => i.enzyme === enz.enzyme);
+      if (ind && ind.Emax > 0) {
+        next = {
+          ...next,
+          useInduction: true,
+          Emax: ind.Emax,
+          EC50_ind: ind.EC50,
+          Iu_ind: ind.Iu_max,
+        };
+      }
+      // From substrate pathways — fm
+      const sub = ddiInputs.substratePathways.find(s => s.enzyme === enz.enzyme);
+      if (sub && sub.fm > 0) {
+        next = { ...next, fm: sub.fm };
+      }
+      return next;
+    }));
+  }
+
+  // Build chart data
+  const chartData = msmResults ? msmResults.enzymeResults.map(r => ({
+    enzyme: r.enzyme,
+    net: r.intermediates.net_activity_ratio,
+    AUCR: r.intermediates.AUCR ?? 1,
+    risk: r.risk,
+  })) : [];
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title="Mechanistic Static Models (FDA 2020 / EMA 2012)"
+        subtitle="Combined mechanistic static model: reversible inhibition + TDI + induction → net enzyme activity → AUCR for victim substrate."
+      />
+
+      {/* Action buttons row */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={handlePrefillFromDDI}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+        >
+          <BookOpen size={13} />
+          Pre-fill from DDI tabs
+        </button>
+        <button
+          onClick={handleDownloadTemplate}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+        >
+          <Download size={13} />
+          Download Template
+        </button>
+        <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors cursor-pointer">
+          <Upload size={13} />
+          Import CSV/XLSX
+          <input
+            ref={importRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleImportChange}
+          />
+        </label>
+        <button
+          onClick={handleExportCurrent}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+        >
+          <Download size={13} />
+          Export Current
+        </button>
+        <button
+          onClick={handleRun}
+          className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors"
+        >
+          <Play size={13} />
+          Run Mechanistic Static
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+
+        {/* Left panel — Per-enzyme configuration table */}
+        <div className="space-y-3">
+          <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+            Enzyme Configuration
+          </h4>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="text-left px-2 py-2 font-semibold text-slate-600 w-20">Enzyme</th>
+                  <th className="text-left px-2 py-2 font-semibold text-slate-600 w-16">fm</th>
+                  <th className="text-center px-2 py-2 font-semibold text-slate-600">Rev. Inh.</th>
+                  <th className="text-center px-2 py-2 font-semibold text-slate-600">TDI</th>
+                  <th className="text-center px-2 py-2 font-semibold text-slate-600">Induction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {msmEnzymeInputs.map((enz, idx) => (
+                  <React.Fragment key={enz.enzyme}>
+                    {/* Main row */}
+                    <tr className={clsx('border-b border-slate-100', idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+                      <td className="px-2 py-2 font-mono font-semibold text-slate-700">{enz.enzyme}</td>
+                      <td className="px-2 py-2">
+                        <CellInput
+                          value={enz.fm === 0 ? undefined : enz.fm}
+                          onChange={v => updateEnzyme(idx, { fm: v ?? 0 })}
+                          placeholder="0"
+                          min={0}
+                          max={1}
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={enz.useReversible}
+                          onChange={e => updateEnzyme(idx, { useReversible: e.target.checked })}
+                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={enz.useTDI}
+                          onChange={e => updateEnzyme(idx, { useTDI: e.target.checked })}
+                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={enz.useInduction}
+                          onChange={e => updateEnzyme(idx, { useInduction: e.target.checked })}
+                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                        />
+                      </td>
+                    </tr>
+                    {/* Parameter expansion rows */}
+                    {(enz.useReversible || enz.useTDI || enz.useInduction) && (
+                      <tr className={clsx('border-b border-slate-100', idx % 2 === 0 ? 'bg-amber-50/30' : 'bg-amber-50/50')}>
+                        <td colSpan={5} className="px-3 py-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                            {enz.useReversible && (
+                              <>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">Ki (µM)</label>
+                                  <CellInput
+                                    value={enz.Ki_rev}
+                                    onChange={v => updateEnzyme(idx, { Ki_rev: v })}
+                                    placeholder="—"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">Iu_rev (µM)</label>
+                                  <CellInput
+                                    value={enz.Iu_rev}
+                                    onChange={v => updateEnzyme(idx, { Iu_rev: v })}
+                                    placeholder="0"
+                                    min={0}
+                                  />
+                                </div>
+                              </>
+                            )}
+                            {enz.useTDI && (
+                              <>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">kinact (h⁻¹)</label>
+                                  <CellInput
+                                    value={enz.kinact}
+                                    onChange={v => updateEnzyme(idx, { kinact: v })}
+                                    placeholder="—"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">KI (µM)</label>
+                                  <CellInput
+                                    value={enz.KI_tdi}
+                                    onChange={v => updateEnzyme(idx, { KI_tdi: v })}
+                                    placeholder="—"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">Iu_tdi (µM)</label>
+                                  <CellInput
+                                    value={enz.Iu_tdi}
+                                    onChange={v => updateEnzyme(idx, { Iu_tdi: v })}
+                                    placeholder="0"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">kdeg (h⁻¹)</label>
+                                  <CellInput
+                                    value={enz.kdeg}
+                                    onChange={v => updateEnzyme(idx, { kdeg: v ?? HUMAN_KDEG[enz.enzyme] })}
+                                    min={0}
+                                    step="0.0001"
+                                  />
+                                </div>
+                              </>
+                            )}
+                            {enz.useInduction && (
+                              <>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">Emax (fold)</label>
+                                  <CellInput
+                                    value={enz.Emax}
+                                    onChange={v => updateEnzyme(idx, { Emax: v })}
+                                    placeholder="—"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">EC50 (µM)</label>
+                                  <CellInput
+                                    value={enz.EC50_ind}
+                                    onChange={v => updateEnzyme(idx, { EC50_ind: v })}
+                                    placeholder="—"
+                                    min={0}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-slate-500 font-medium">Iu_ind (µM)</label>
+                                  <CellInput
+                                    value={enz.Iu_ind}
+                                    onChange={v => updateEnzyme(idx, { Iu_ind: v })}
+                                    placeholder="0"
+                                    min={0}
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400">
+            Check mechanism boxes to reveal parameter fields. fm = fraction metabolized by this enzyme.
+            kdeg auto-filled from human physiology DB. Iu = unbound inhibitor/inducer concentration (µM).
+          </p>
+        </div>
+
+        {/* Right panel — Results table + visualization */}
+        <div className="space-y-4">
+          {msmResults ? (
+            <>
+              {/* Results table */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Results</h4>
+                  <span className={clsx(
+                    'px-2 py-0.5 rounded-full text-xs font-bold',
+                    RISK_BG[msmResults.overallRisk],
+                  )}>
+                    Overall: {RISK_LABEL[msmResults.overallRisk]}
+                  </span>
+                </div>
+                {msmResults.warnings.length > 0 && (
+                  <WarningBox warnings={msmResults.warnings} title="Notices" />
+                )}
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="text-left px-2 py-2 font-semibold text-slate-600">Enzyme</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">fm</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">R_rev</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">Act_rev</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">λ</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">R_TDI</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">Act_TDI</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">Fold_Ind</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">Net Act.</th>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600">AUCR</th>
+                        <th className="text-center px-2 py-2 font-semibold text-slate-600">Risk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {msmResults.enzymeResults.map((r, i) => {
+                        const im = r.intermediates;
+                        const enzInput = msmEnzymeInputs.find(e => e.enzyme === r.enzyme);
+                        return (
+                          <tr key={r.enzyme} className={clsx('border-b border-slate-100 last:border-0', i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50')}>
+                            <td className="px-2 py-2 font-mono font-semibold text-slate-700">{r.enzyme}</td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={enzInput?.fm} dp={2} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.R_rev} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.activity_rev} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.lambda} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.R_TDI} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.activity_TDI} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono text-slate-600">
+                              <NumCell v={im.fold_induction} dp={2} />
+                            </td>
+                            <td className={clsx('px-2 py-2 text-right font-mono font-semibold',
+                              im.net_activity_ratio < 1 ? 'text-orange-700' : im.net_activity_ratio > 1 ? 'text-green-700' : 'text-slate-600')}>
+                              <NumCell v={im.net_activity_ratio} />
+                            </td>
+                            <td className="px-2 py-2 text-right font-mono font-bold text-slate-800">
+                              <NumCell v={im.AUCR} dp={2} />
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <RiskBadge risk={r.risk} />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {msmResults.enzymeResults.length === 0 && (
+                        <tr>
+                          <td colSpan={11} className="px-3 py-4 text-center text-slate-400 text-xs">
+                            No results. Ensure at least one mechanism is enabled with valid parameters.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Net Act. = Fold_Ind / (R_rev × R_TDI).
+                  AUCR = 1 / (fm × Net Act. + (1 − fm)).
+                  AUCR &gt; 1: inhibition; AUCR &lt; 1: induction.
+                </p>
+              </div>
+
+              {/* Visualization */}
+              {chartData.length > 0 && (
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <Plot
+                    data={[
+                      {
+                        type: 'bar',
+                        x: chartData.map(d => d.enzyme),
+                        y: chartData.map(d => d.net),
+                        name: 'Net Activity Ratio',
+                        marker: {
+                          color: chartData.map(d =>
+                            d.net < 1 ? RISK_COLORS_MSM.risk : RISK_COLORS_MSM.no_risk,
+                          ),
+                        },
+                        text: chartData.map(d => d.net.toFixed(3)),
+                        textposition: 'outside' as const,
+                      },
+                      {
+                        type: 'scatter',
+                        mode: 'lines',
+                        x: chartData.map(d => d.enzyme),
+                        y: Array(chartData.length).fill(1.0),
+                        name: 'Baseline (1.0)',
+                        line: { color: '#64748b', dash: 'dash', width: 1.5 },
+                      },
+                    ]}
+                    layout={{
+                      title: { text: 'Net CYP Enzyme Activity Ratio', font: { size: 13, color: '#1e293b' } },
+                      xaxis: { tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
+                      yaxis: {
+                        title: { text: 'Net activity (fold_ind / R_rev × R_TDI)', font: { size: 11 } },
+                        gridcolor: '#f1f5f9',
+                        zeroline: true,
+                        zerolinecolor: '#cbd5e1',
+                      },
+                      plot_bgcolor: '#ffffff',
+                      paper_bgcolor: '#ffffff',
+                      margin: { t: 45, b: 55, l: 60, r: 20 },
+                      height: 280,
+                      showlegend: true,
+                      legend: { x: 1, xanchor: 'right', y: 1, font: { size: 10 } },
+                      font: { family: 'Inter, system-ui, sans-serif', size: 11 },
+                    }}
+                    config={{ displayModeBar: false, responsive: true }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+
+              {/* AUCR chart */}
+              {chartData.length > 0 && (
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <Plot
+                    data={[
+                      {
+                        type: 'bar',
+                        x: chartData.map(d => d.enzyme),
+                        y: chartData.map(d => d.AUCR),
+                        name: 'AUCR',
+                        marker: {
+                          color: chartData.map(d => RISK_COLORS_MSM[d.risk]),
+                        },
+                        text: chartData.map(d => d.AUCR.toFixed(2)),
+                        textposition: 'outside' as const,
+                      },
+                      {
+                        type: 'scatter',
+                        mode: 'lines',
+                        x: chartData.map(d => d.enzyme),
+                        y: Array(chartData.length).fill(1.25),
+                        name: 'Potential risk (1.25)',
+                        line: { color: '#eab308', dash: 'dash', width: 1.5 },
+                      },
+                      {
+                        type: 'scatter',
+                        mode: 'lines',
+                        x: chartData.map(d => d.enzyme),
+                        y: Array(chartData.length).fill(2.0),
+                        name: 'Risk (2.0)',
+                        line: { color: '#f97316', dash: 'dot', width: 1.5 },
+                      },
+                    ]}
+                    layout={{
+                      title: { text: 'Substrate AUCR', font: { size: 13, color: '#1e293b' } },
+                      xaxis: { tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
+                      yaxis: {
+                        title: { text: 'AUCR (victim AUC ratio)', font: { size: 11 } },
+                        gridcolor: '#f1f5f9',
+                        zeroline: false,
+                      },
+                      plot_bgcolor: '#ffffff',
+                      paper_bgcolor: '#ffffff',
+                      margin: { t: 45, b: 55, l: 60, r: 20 },
+                      height: 280,
+                      showlegend: true,
+                      legend: { x: 1, xanchor: 'right', y: 1, font: { size: 10 } },
+                      font: { family: 'Inter, system-ui, sans-serif', size: 11 },
+                    }}
+                    config={{ displayModeBar: false, responsive: true }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 py-12 text-center text-sm text-slate-400">
+              <Activity size={28} className="mx-auto mb-3 text-amber-300" />
+              <p>Click <strong>Run Mechanistic Static</strong> to compute results.</p>
+              <p className="text-xs mt-1">Enable mechanisms using checkboxes on the left, then enter parameters.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Risk Matrix
 // ---------------------------------------------------------------------------
 
@@ -1343,6 +1950,15 @@ export default function DDIModule() {
   const [activeTab, setActiveTab] = useState<TabId>('substrate');
   const [error, setError] = useState<string | null>(null);
 
+  // Tab F — Mechanistic Static Model state
+  const [msmEnzymeInputs, setMsmEnzymeInputs] = useState<MechanisticStaticEnzymeInputs[]>(
+    () => defaultMsmEnzymeInputs(),
+  );
+  const [msmResults, setMsmResults] = useState<MechanisticStaticResults | null>(null);
+
+  // Ref for the header-level import file input
+  const headerImportRef = useRef<HTMLInputElement>(null);
+
   // Helpers
   function setInputs(patch: Partial<DDIInputs> | ((prev: DDIInputs) => DDIInputs)) {
     setInputsState(prev => {
@@ -1447,6 +2063,91 @@ export default function DDIModule() {
     exportJSON(session, `ddi-${inputs.compound.name || 'compound'}-${Date.now()}.json`);
   }, [inputs, results]);
 
+  const handleDownloadDDITemplate = useCallback(() => {
+    const csv = ddiCSVTemplate();
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ddi-batch-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleImportDDIFile = useCallback(async (file: File) => {
+    try {
+      const rows = await parseFile(file);
+      const batchRecords = parseDDIBatchCSV(rows);
+      if (batchRecords.length === 0) {
+        alert('No valid records found in file.');
+        return;
+      }
+      // Load first compound's data into the DDI tabs
+      const firstCompound = batchRecords[0].compound_name;
+      const compoundRecords = batchRecords.filter(r => r.compound_name === firstCompound);
+
+      const next = blankInputs();
+      next.compound.name = firstCompound;
+
+      for (const rec of compoundRecords) {
+        const enzyme = rec.enzyme_or_transporter;
+        switch (rec.pathway_type) {
+          case 'substrate': {
+            const idx = next.substratePathways.findIndex(p => p.enzyme === enzyme);
+            if (idx >= 0 && rec.fm !== undefined) {
+              next.substratePathways[idx] = { ...next.substratePathways[idx], fm: rec.fm };
+            }
+            break;
+          }
+          case 'reversible_inhibitor': {
+            const idx = next.reversibleInhibitors.findIndex(r => r.enzyme === enzyme);
+            if (idx >= 0) {
+              next.reversibleInhibitors[idx] = {
+                ...next.reversibleInhibitors[idx],
+                Ki: rec.Ki,
+                IC50: rec.IC50,
+                Iu_max: rec.concentration_value,
+              };
+            }
+            break;
+          }
+          case 'TDI': {
+            const idx = next.tdiData.findIndex(t => t.enzyme === enzyme);
+            if (idx >= 0) {
+              next.tdiData[idx] = {
+                ...next.tdiData[idx],
+                kinact: rec.kinact ?? 0,
+                KI: rec.KI ?? 1,
+                Iu_max: rec.concentration_value ?? 0,
+              };
+            }
+            break;
+          }
+          case 'inducer': {
+            const idx = next.induction.findIndex(i => i.enzyme === enzyme);
+            if (idx >= 0) {
+              next.induction[idx] = {
+                ...next.induction[idx],
+                Emax: rec.Emax ?? 0,
+                EC50: rec.EC50 ?? 1,
+                Iu_max: rec.concentration_value ?? 0,
+              };
+            }
+            break;
+          }
+        }
+      }
+
+      setInputsState(next);
+      setDDIInputs(next);
+      setResultsState(null);
+      setDDIResults(null);
+      setError(null);
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [setDDIInputs, setDDIResults]);
+
   return (
     <div className="min-h-full bg-slate-50">
       {/* Module header */}
@@ -1479,6 +2180,30 @@ export default function DDIModule() {
               <RotateCcw size={14} />
               Reset
             </button>
+            <button
+              onClick={handleDownloadDDITemplate}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+            >
+              <Download size={14} />
+              DDI Template
+            </button>
+            <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors cursor-pointer">
+              <Upload size={14} />
+              Import DDI
+              <input
+                ref={headerImportRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+                onChange={async e => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    await handleImportDDIFile(file);
+                    if (headerImportRef.current) headerImportRef.current.value = '';
+                  }
+                }}
+              />
+            </label>
             {results && (
               <>
                 <button
@@ -1585,6 +2310,16 @@ export default function DDIModule() {
               <TransporterTab
                 data={inputs.transporterInhibition}
                 onChange={v => setInputs({ transporterInhibition: v })}
+              />
+            )}
+            {activeTab === 'mechanistic' && (
+              <MechanisticStaticTab
+                msmEnzymeInputs={msmEnzymeInputs}
+                setMsmEnzymeInputs={setMsmEnzymeInputs}
+                msmResults={msmResults}
+                setMsmResults={setMsmResults}
+                ddiInputs={inputs}
+                onImportFile={handleImportDDIFile}
               />
             )}
           </div>
