@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: 248 250 252;
+    --text-primary: 15 23 42;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans antialiased;
+    min-height: 100vh;
+  }
+
+  /* Scientific equation styling */
+  .equation {
+    @apply font-mono text-sm bg-slate-100 px-3 py-2 rounded border border-slate-200;
+  }
+
+  .equation-block {
+    @apply font-mono text-sm bg-indigo-50 px-4 py-3 rounded-lg border border-indigo-200 my-2;
+  }
+
+  /* Table styles */
+  .sci-table {
+    @apply w-full text-sm border-collapse;
+  }
+  .sci-table th {
+    @apply bg-slate-700 text-white px-3 py-2 text-left font-medium text-xs uppercase tracking-wider;
+  }
+  .sci-table td {
+    @apply px-3 py-2 border-b border-slate-200;
+  }
+  .sci-table tr:hover td {
+    @apply bg-slate-50;
+  }
+
+  /* Risk badge colors */
+  .risk-no_risk { @apply bg-green-100 text-green-800; }
+  .risk-potential_risk { @apply bg-yellow-100 text-yellow-800; }
+  .risk-risk { @apply bg-orange-100 text-orange-800; }
+  .risk-high_risk { @apply bg-red-100 text-red-800; }
+
+  /* Warning severity colors */
+  .warn-info { @apply bg-blue-50 border-blue-300 text-blue-800; }
+  .warn-caution { @apply bg-yellow-50 border-yellow-300 text-yellow-800; }
+  .warn-warning { @apply bg-orange-50 border-orange-300 text-orange-800; }
+  .warn-error { @apply bg-red-50 border-red-300 text-red-800; }
+}

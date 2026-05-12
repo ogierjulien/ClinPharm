@@ -1,0 +1,6 @@
+species,label,body_weight_kg,CL,Vss,fup,brain_weight_g,MLP_years,CL_perkg
+mouse,Mouse,0.02,1.2,0.030,0.12,0.42,3.5,false
+rat,Rat,0.25,7.5,0.300,0.10,2.00,4.7,false
+dog,Dog,11.3,113.0,10.17,0.15,72.0,20.0,false
+monkey,Monkey,5.0,75.0,5.50,0.11,87.0,40.0,false
+cynomolgus_monkey,Cynomolgus,4.0,72.0,4.80,0.11,80.0,40.0,false

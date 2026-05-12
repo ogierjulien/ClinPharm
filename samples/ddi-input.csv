@@ -1,0 +1,7 @@
+enzyme_or_transporter,type,Ki_uM,IC50_uM,kinact_h,KI_uM,Emax_fold,EC50_uM,fm,Iu_max_uM
+CYP3A4,substrate,,,,,,,0.65,
+CYP2D6,substrate,,,,,,,0.20,
+CYP3A4,reversible_inhibitor,,5.0,,,,,, 0.5
+CYP2D6,reversible_inhibitor,,16.0,,,,,,0.5
+CYP3A4,TDI,,,,1.2,0.8,,,0.5
+P-gp,transporter,,5.0,,,,,, 0.5

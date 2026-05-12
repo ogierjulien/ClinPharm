@@ -1,0 +1,4 @@
+species,body_weight_kg,liver_weight_g,MPPGL,HPGL,Qh_mL_min
+rat,0.25,10.0,45,117,13.8
+dog,11.3,309.0,52,215,309.0
+human,70.0,1800.0,45,120,1500.0
