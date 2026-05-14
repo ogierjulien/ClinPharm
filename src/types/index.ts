@@ -300,8 +300,17 @@ export interface IVIVESpeciesInputs {
   overrideQh?: boolean;
 }
 
+export interface IVIVEPerSpeciesCompound {
+  species: Species;
+  CLint_app: number;         // species-specific apparent intrinsic clearance
+  fup: number;               // species-specific unbound plasma fraction
+  BP_ratio: number;          // species-specific blood-to-plasma ratio
+  observed_CLh?: number;     // species-specific observed hepatic CL for fold-error
+}
+
 export interface IVIVEInputs {
   compound: IVIVECompoundInputs;
+  perSpeciesCompound?: IVIVEPerSpeciesCompound[];  // per-species CLint_app, fup, BP_ratio, observed_CLh
   speciesData: IVIVESpeciesInputs[];
   modelsSelected: IVIVEModel[];
   CLint_units: string;

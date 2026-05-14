@@ -10,11 +10,13 @@ import type {
   IVIVEInputs,
   IVIVEModel,
   IVIVEModelOutput,
+  IVIVEPerSpeciesCompound,
   IVIVEResults,
   IVIVESpeciesInputs,
   IVIVESpeciesResult,
   Warning,
 } from '@/types';
+
 
 import {
   scaleCLint_microsomal,
@@ -215,27 +217,30 @@ export function runIVIVE(inputs: IVIVEInputs): IVIVEResults {
     return { speciesResults: [], warnings };
   }
 
-  // Validate compound inputs
-  if (compound.CLint_app <= 0) {
-    warnings.push({
-      code: 'INVALID_CLINT',
-      message: `CLint_app must be positive (got ${compound.CLint_app}).`,
-      severity: 'error',
-    });
-  }
-  if (compound.fup <= 0 || compound.fup > 1) {
-    warnings.push({
-      code: 'INVALID_FUP',
-      message: `fup must be in (0, 1] (got ${compound.fup}).`,
-      severity: 'error',
-    });
-  }
-  if (compound.BP_ratio <= 0) {
-    warnings.push({
-      code: 'INVALID_BP',
-      message: `BP_ratio must be positive (got ${compound.BP_ratio}).`,
-      severity: 'error',
-    });
+  // Validate compound inputs — skip global validation when per-species data overrides all species
+  const hasPerSpecies = inputs.perSpeciesCompound && inputs.perSpeciesCompound.length > 0;
+  if (!hasPerSpecies) {
+    if (compound.CLint_app <= 0) {
+      warnings.push({
+        code: 'INVALID_CLINT',
+        message: `CLint_app must be positive (got ${compound.CLint_app}).`,
+        severity: 'error',
+      });
+    }
+    if (compound.fup <= 0 || compound.fup > 1) {
+      warnings.push({
+        code: 'INVALID_FUP',
+        message: `fup must be in (0, 1] (got ${compound.fup}).`,
+        severity: 'error',
+      });
+    }
+    if (compound.BP_ratio <= 0) {
+      warnings.push({
+        code: 'INVALID_BP',
+        message: `BP_ratio must be positive (got ${compound.BP_ratio}).`,
+        severity: 'error',
+      });
+    }
   }
 
   const includedSpecies = speciesData.filter(s => s.include);
@@ -253,7 +258,12 @@ export function runIVIVE(inputs: IVIVEInputs): IVIVEResults {
 
   for (const sp of includedSpecies) {
     try {
-      const result = computeSpeciesIVIVE(compound, sp, modelsSelected);
+      // Merge per-species compound overrides when available
+      const perSp = inputs.perSpeciesCompound?.find(p => p.species === sp.species);
+      const compoundForSpecies: IVIVECompoundInputs = perSp
+        ? { ...compound, CLint_app: perSp.CLint_app, fup: perSp.fup, BP_ratio: perSp.BP_ratio, observed_CLh: perSp.observed_CLh }
+        : compound;
+      const result = computeSpeciesIVIVE(compoundForSpecies, sp, modelsSelected);
       speciesResults.push(result);
       if (sp.species === 'human') {
         humanResult = result;

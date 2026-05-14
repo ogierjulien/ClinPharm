@@ -31,6 +31,7 @@ import type {
   IVIVEModel,
   IVIVESpeciesInputs,
   IVIVECompoundInputs,
+  IVIVEPerSpeciesCompound,
   IVIVEResults,
   IVIVESpeciesResult,
   IVIVEModelOutput,
@@ -52,7 +53,6 @@ import { parseFile, iviveCompoundCSVTemplate, parseIVIVECompoundCSV } from '@/ut
 import {
   WarningBox,
   EquationPanel,
-  NumberInput,
 } from '@/components/shared';
 import type { FormulaEntry } from '@/components/shared';
 
@@ -68,7 +68,7 @@ type _IVIVEModelOutput = IVIVEModelOutput;
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SPECIES: Species[] = ['rat', 'dog', 'human'];
+const DEFAULT_SPECIES: Species[] = ['mouse', 'rat', 'rabbit', 'minipig', 'dog', 'monkey', 'human'];
 
 const ALL_MODELS: IVIVEModel[] = [
   'well_stirred_no_binding',
@@ -196,9 +196,14 @@ function buildDefaultCompound(): IVIVECompoundInputs {
   };
 }
 
+function buildDefaultPerSpeciesCompound(sp: Species): IVIVEPerSpeciesCompound {
+  return { species: sp, CLint_app: 0, fup: 0.1, BP_ratio: 1.0, observed_CLh: undefined };
+}
+
 function buildDefaultInputs(): IVIVEInputs {
   return {
     compound: buildDefaultCompound(),
+    perSpeciesCompound: DEFAULT_SPECIES.map(buildDefaultPerSpeciesCompound),
     speciesData: DEFAULT_SPECIES.map(buildDefaultSpeciesRow),
     modelsSelected: ['well_stirred_no_binding', 'well_stirred_with_binding', 'parallel_tube'],
     CLint_units: 'µL/min/mg',
@@ -302,12 +307,25 @@ function computeSensitivity(
   if (!sp) return [];
   const spDef = sp;
 
-  function clhFor(overrideCompound: Partial<IVIVECompoundInputs>, overrideSp?: Partial<IVIVESpeciesInputs>): number {
+  const perSp = inputs.perSpeciesCompound?.find(p => p.species === spDef.species);
+  const baseFup   = perSp?.fup       ?? inputs.compound.fup;
+  const baseCLint = perSp?.CLint_app ?? inputs.compound.CLint_app;
+  const baseFumic = inputs.compound.fumic;
+
+  function clhFor(
+    globalPatch: Partial<IVIVECompoundInputs>,
+    perSpPatch?: Partial<IVIVEPerSpeciesCompound>,
+    spPatch?: Partial<IVIVESpeciesInputs>,
+  ): number {
+    const updatedPerSpecies = inputs.perSpeciesCompound?.map(p =>
+      p.species === spDef.species ? { ...p, ...(perSpPatch ?? {}) } : p,
+    );
     const modInputs: IVIVEInputs = {
       ...inputs,
-      compound: { ...inputs.compound, ...overrideCompound },
+      compound: { ...inputs.compound, ...globalPatch },
+      perSpeciesCompound: updatedPerSpecies,
       speciesData: inputs.speciesData.map(s =>
-        s.species === spDef.species ? { ...s, ...overrideSp } : s,
+        s.species === spDef.species ? { ...s, ...(spPatch ?? {}) } : s,
       ),
       modelsSelected: [model],
     };
@@ -319,29 +337,28 @@ function computeSensitivity(
   }
 
   const base = clhFor({});
-
   const entries: SensitivityEntry[] = [];
 
   // fup ±50%
-  const fupLow  = clhFor({ fup: inputs.compound.fup * 0.5  });
-  const fupHigh = clhFor({ fup: inputs.compound.fup * 1.5  });
+  const fupLow  = perSp ? clhFor({}, { fup: baseFup * 0.5 }) : clhFor({ fup: baseFup * 0.5 });
+  const fupHigh = perSp ? clhFor({}, { fup: baseFup * 1.5 }) : clhFor({ fup: baseFup * 1.5 });
   entries.push({ label: 'fup ±50%', baseCLh: base, lowCLh: fupLow, highCLh: fupHigh, delta: Math.abs(fupHigh - fupLow) });
 
   // CLint ±50%
-  const clLow  = clhFor({ CLint_app: inputs.compound.CLint_app * 0.5 });
-  const clHigh = clhFor({ CLint_app: inputs.compound.CLint_app * 1.5 });
+  const clLow  = perSp ? clhFor({}, { CLint_app: baseCLint * 0.5 }) : clhFor({ CLint_app: baseCLint * 0.5 });
+  const clHigh = perSp ? clhFor({}, { CLint_app: baseCLint * 1.5 }) : clhFor({ CLint_app: baseCLint * 1.5 });
   entries.push({ label: 'CLint ±50%', baseCLh: base, lowCLh: clLow, highCLh: clHigh, delta: Math.abs(clHigh - clLow) });
 
   // fumic ±50% (if applicable)
-  if (inputs.compound.apply_fumic_correction && inputs.compound.fumic !== undefined) {
-    const fmLow  = clhFor({ fumic: inputs.compound.fumic * 0.5 });
-    const fmHigh = clhFor({ fumic: inputs.compound.fumic * 1.5 });
+  if (inputs.compound.apply_fumic_correction && baseFumic !== undefined) {
+    const fmLow  = clhFor({ fumic: baseFumic * 0.5 });
+    const fmHigh = clhFor({ fumic: baseFumic * 1.5 });
     entries.push({ label: 'fumic ±50%', baseCLh: base, lowCLh: fmLow, highCLh: fmHigh, delta: Math.abs(fmHigh - fmLow) });
   }
 
   // BW ±20%
-  const bwLow  = clhFor({}, { bodyWeight_kg: sp.bodyWeight_kg * 0.8, liverWeight_g: sp.liverWeight_g * 0.8, Qh_mL_min: sp.Qh_mL_min * 0.8 });
-  const bwHigh = clhFor({}, { bodyWeight_kg: sp.bodyWeight_kg * 1.2, liverWeight_g: sp.liverWeight_g * 1.2, Qh_mL_min: sp.Qh_mL_min * 1.2 });
+  const bwLow  = clhFor({}, {}, { bodyWeight_kg: sp.bodyWeight_kg * 0.8, liverWeight_g: sp.liverWeight_g * 0.8, Qh_mL_min: sp.Qh_mL_min * 0.8 });
+  const bwHigh = clhFor({}, {}, { bodyWeight_kg: sp.bodyWeight_kg * 1.2, liverWeight_g: sp.liverWeight_g * 1.2, Qh_mL_min: sp.Qh_mL_min * 1.2 });
   entries.push({ label: 'BW ±20%', baseCLh: base, lowCLh: bwLow, highCLh: bwHigh, delta: Math.abs(bwHigh - bwLow) });
 
   return entries.sort((a, b) => b.delta - a.delta);
@@ -350,145 +367,6 @@ function computeSensitivity(
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-// ---- Compound Inputs Panel ----
-
-interface CompoundPanelProps {
-  compound: IVIVECompoundInputs;
-  onChange: (c: IVIVECompoundInputs) => void;
-}
-
-function CompoundPanel({ compound, onChange }: CompoundPanelProps) {
-  const isMicrosomes = compound.CLint_source === 'microsomes';
-  const clintUnit = isMicrosomes ? 'µL/min/mg protein' : 'µL/min/10⁶ cells';
-  const fuLabel   = isMicrosomes ? 'fumic' : 'fuhep';
-  const fuValue   = isMicrosomes ? compound.fumic : compound.fuhep;
-
-  function set<K extends keyof IVIVECompoundInputs>(key: K, val: IVIVECompoundInputs[K]) {
-    onChange({ ...compound, [key]: val });
-  }
-
-  function setFu(val: number | undefined) {
-    if (isMicrosomes) set('fumic', val);
-    else set('fuhep', val);
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Compound name */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-slate-600">Compound Name</label>
-        <input
-          type="text"
-          value={compound.compound.name}
-          onChange={e => set('compound', { ...compound.compound, name: e.target.value })}
-          placeholder="e.g. Compound A"
-          className="rounded border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-        />
-      </div>
-
-      {/* CLint source */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-slate-600">CLint Source</label>
-        <div className="flex gap-2">
-          {(['microsomes', 'hepatocytes'] as const).map(src => (
-            <button
-              key={src}
-              type="button"
-              onClick={() => set('CLint_source', src)}
-              className={clsx(
-                'flex-1 rounded border px-3 py-1.5 text-xs font-medium capitalize transition-colors',
-                compound.CLint_source === src
-                  ? 'border-teal-600 bg-teal-600 text-white'
-                  : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50',
-              )}
-            >
-              {src}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* CLint_app */}
-      <NumberInput
-        label="CLint_app (apparent)"
-        value={compound.CLint_app || undefined}
-        onChange={v => set('CLint_app', v ?? 0)}
-        unit={clintUnit}
-        min={0}
-        required
-        tooltip="Apparent intrinsic clearance measured in vitro"
-      />
-
-      {/* fup */}
-      <NumberInput
-        label="fup (unbound plasma fraction)"
-        value={compound.fup}
-        onChange={v => set('fup', v ?? 0.1)}
-        min={0}
-        max={1}
-        step={0.01}
-        required
-        tooltip="Fraction unbound in plasma (0–1)"
-      />
-
-      {/* fumic / fuhep */}
-      <NumberInput
-        label={`${fuLabel} (unbound in ${isMicrosomes ? 'microsomes' : 'hepatocytes'})`}
-        value={fuValue}
-        onChange={setFu}
-        min={0}
-        max={1}
-        step={0.01}
-        tooltip={`Unbound fraction in the in vitro ${isMicrosomes ? 'microsomal' : 'hepatocyte'} incubation`}
-        placeholder="optional"
-      />
-
-      {/* fu correction toggle */}
-      <div className="flex items-center justify-between py-1">
-        <span className="text-xs font-medium text-slate-600">
-          Apply {fuLabel} correction
-        </span>
-        <Switch.Root
-          checked={compound.apply_fumic_correction}
-          onCheckedChange={v => set('apply_fumic_correction', v)}
-          className={clsx(
-            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
-            compound.apply_fumic_correction ? 'bg-teal-600' : 'bg-slate-300',
-          )}
-        >
-          <Switch.Thumb
-            className={clsx(
-              'pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg transition-transform',
-              compound.apply_fumic_correction ? 'translate-x-4' : 'translate-x-0',
-            )}
-          />
-        </Switch.Root>
-      </div>
-
-      {/* BP ratio */}
-      <NumberInput
-        label="BP ratio (blood-to-plasma)"
-        value={compound.BP_ratio}
-        onChange={v => set('BP_ratio', v ?? 1)}
-        min={0.1}
-        step={0.05}
-        tooltip="Blood-to-plasma concentration ratio. Default = 1.0"
-      />
-
-      {/* Observed CLh */}
-      <NumberInput
-        label="Observed CLh (optional)"
-        value={compound.observed_CLh}
-        onChange={v => set('observed_CLh', v)}
-        unit="mL/min"
-        min={0}
-        placeholder="optional"
-        tooltip="Observed in vivo hepatic clearance for fold-error comparison"
-      />
-    </div>
-  );
-}
 
 // ---- Species Table Row ----
 
@@ -1058,6 +936,15 @@ export default function IVIVEModule() {
     }));
   }, []);
 
+  const handlePerSpeciesCompoundChange = useCallback((species: Species, patch: Partial<IVIVEPerSpeciesCompound>) => {
+    setInputs(prev => ({
+      ...prev,
+      perSpeciesCompound: (prev.perSpeciesCompound ?? []).map(p =>
+        p.species === species ? { ...p, ...patch } : p,
+      ),
+    }));
+  }, []);
+
   const handleRun = useCallback(() => {
     setIVIVERunning(true);
     try {
@@ -1197,6 +1084,14 @@ export default function IVIVEModule() {
         apply_fumic_correction: rec.apply_fumic_correction,
         observed_CLh: rec.observed_CLh,
       },
+      // Apply same compound params to all per-species rows
+      perSpeciesCompound: (prev.perSpeciesCompound ?? []).map(p => ({
+        ...p,
+        CLint_app: rec.CLint_app,
+        fup: rec.fup,
+        BP_ratio: rec.BP_ratio,
+        observed_CLh: rec.observed_CLh,
+      })),
     }));
   }, [batchRecords]);
 
@@ -1363,14 +1258,14 @@ export default function IVIVEModule() {
         {/* ===== Tab 1: Inputs & Results ===== */}
         <Tabs.Content value="inputs-results" className="p-4 space-y-4 focus:outline-none">
 
-          {/* ── 1. Compound inputs + model selection — single full-width horizontal panel ── */}
+          {/* ── 1. Compound inputs + model selection ── */}
           <div className="bg-white rounded-lg border border-slate-200 p-4">
             <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">Compound &amp; Model Settings</h3>
 
-            {/* Compound fields — horizontal grid, all on one row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-              {/* Name */}
-              <div className="lg:col-span-2 flex flex-col gap-1">
+            {/* Shared fields row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              {/* Compound Name */}
+              <div className="sm:col-span-2 flex flex-col gap-1">
                 <label className="text-xs font-medium text-slate-600">Compound Name</label>
                 <input
                   type="text"
@@ -1381,7 +1276,7 @@ export default function IVIVEModule() {
                 />
               </div>
 
-              {/* CLint source toggle */}
+              {/* CLint Source */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-slate-600">CLint Source</label>
                 <div className="flex gap-1 h-[34px]">
@@ -1397,43 +1292,20 @@ export default function IVIVEModule() {
                           : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50',
                       )}
                     >
-                      {src === 'microsomes' ? 'Mic' : 'Hep'}
+                      {src === 'microsomes' ? 'Microsomes' : 'Hepatocytes'}
                     </button>
                   ))}
                 </div>
-              </div>
-
-              {/* CLint_app */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-600">
-                  CLint_app&nbsp;
-                  <span className="text-slate-400 font-normal">({inputs.compound.CLint_source === 'microsomes' ? 'µL/min/mg' : 'µL/min/10⁶'})</span>
-                </label>
-                <input type="number" min={0} step="any"
-                  value={inputs.compound.CLint_app || ''}
-                  onChange={e => handleCompoundChange({ ...inputs.compound, CLint_app: parseFloat(e.target.value) || 0 })}
-                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  placeholder="—"
-                />
-              </div>
-
-              {/* fup */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-600">fup <span className="text-slate-400 font-normal">0–1</span></label>
-                <input type="number" min={0} max={1} step={0.01}
-                  value={inputs.compound.fup}
-                  onChange={e => handleCompoundChange({ ...inputs.compound, fup: parseFloat(e.target.value) ?? 0.1 })}
-                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
               </div>
 
               {/* fumic / fuhep */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-slate-600">
                   {inputs.compound.CLint_source === 'microsomes' ? 'fumic' : 'fuhep'}
-                  <span className="text-slate-400 font-normal"> 0–1</span>
+                  <span className="text-slate-400 font-normal"> (0–1)</span>
                 </label>
-                <input type="number" min={0} max={1} step={0.01}
+                <input
+                  type="number" min={0} max={1} step={0.01}
                   value={(inputs.compound.CLint_source === 'microsomes' ? inputs.compound.fumic : inputs.compound.fuhep) ?? ''}
                   onChange={e => {
                     const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
@@ -1445,55 +1317,107 @@ export default function IVIVEModule() {
                   placeholder="optional"
                 />
               </div>
+            </div>
 
-              {/* BP ratio */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-600">BP ratio</label>
-                <input type="number" min={0.1} step={0.05}
-                  value={inputs.compound.BP_ratio}
-                  onChange={e => handleCompoundChange({ ...inputs.compound, BP_ratio: parseFloat(e.target.value) ?? 1 })}
-                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
-              </div>
+            {/* fumic correction toggle */}
+            <div className="mb-3 flex items-center gap-2">
+              <Switch.Root
+                checked={inputs.compound.apply_fumic_correction}
+                onCheckedChange={v => handleCompoundChange({ ...inputs.compound, apply_fumic_correction: v })}
+                className={clsx(
+                  'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+                  inputs.compound.apply_fumic_correction ? 'bg-teal-600' : 'bg-slate-300',
+                )}
+              >
+                <Switch.Thumb className={clsx(
+                  'pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg transition-transform',
+                  inputs.compound.apply_fumic_correction ? 'translate-x-4' : 'translate-x-0',
+                )} />
+              </Switch.Root>
+              <span className="text-xs font-medium text-slate-600">
+                Apply {inputs.compound.CLint_source === 'microsomes' ? 'fumic' : 'fuhep'} correction
+              </span>
+            </div>
 
-              {/* Observed CLh */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-600">Obs. CLh <span className="text-slate-400 font-normal">mL/min</span></label>
-                <input type="number" min={0} step="any"
-                  value={inputs.compound.observed_CLh ?? ''}
-                  onChange={e => handleCompoundChange({ ...inputs.compound, observed_CLh: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
-                  className="rounded border border-slate-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  placeholder="optional"
-                />
+            {/* Per-species compound parameters table */}
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Per-Species Compound Parameters
+                <span className="ml-2 text-slate-400 font-normal normal-case">
+                  (CLint_app in {inputs.compound.CLint_source === 'microsomes' ? 'µL/min/mg protein' : 'µL/min/10⁶ cells'})
+                </span>
+              </p>
+              <div className="overflow-x-auto rounded border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-600">
+                      <th className="px-3 py-1.5 text-left font-medium whitespace-nowrap">Species</th>
+                      <th className="px-3 py-1.5 text-left font-medium whitespace-nowrap">CLint_app</th>
+                      <th className="px-3 py-1.5 text-left font-medium whitespace-nowrap">fup (0–1)</th>
+                      <th className="px-3 py-1.5 text-left font-medium whitespace-nowrap">BP ratio</th>
+                      <th className="px-3 py-1.5 text-left font-medium whitespace-nowrap">Obs. CLh (mL/min)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inputs.speciesData.map((spRow, ri) => {
+                      const psc = inputs.perSpeciesCompound?.find(p => p.species === spRow.species);
+                      const inputClass = clsx(
+                        'w-full rounded border px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500',
+                        !spRow.include ? 'border-slate-200 bg-slate-50 text-slate-400' : 'border-slate-300 bg-white',
+                      );
+                      return (
+                        <tr key={spRow.species} className={clsx('border-b border-slate-100 last:border-0', ri % 2 === 0 ? 'bg-white' : 'bg-slate-50/50', !spRow.include && 'opacity-60')}>
+                          <td className="px-3 py-1.5 font-medium text-slate-700 whitespace-nowrap">{spRow.label}</td>
+                          <td className="px-2 py-1 w-28">
+                            <input
+                              type="number" min={0} step="any"
+                              value={psc?.CLint_app ?? ''}
+                              disabled={!spRow.include}
+                              onChange={e => handlePerSpeciesCompoundChange(spRow.species, { CLint_app: parseFloat(e.target.value) || 0 })}
+                              className={inputClass}
+                              placeholder="—"
+                            />
+                          </td>
+                          <td className="px-2 py-1 w-24">
+                            <input
+                              type="number" min={0} max={1} step={0.01}
+                              value={psc?.fup ?? ''}
+                              disabled={!spRow.include}
+                              onChange={e => handlePerSpeciesCompoundChange(spRow.species, { fup: parseFloat(e.target.value) || 0.1 })}
+                              className={inputClass}
+                              placeholder="—"
+                            />
+                          </td>
+                          <td className="px-2 py-1 w-24">
+                            <input
+                              type="number" min={0.1} step={0.05}
+                              value={psc?.BP_ratio ?? ''}
+                              disabled={!spRow.include}
+                              onChange={e => handlePerSpeciesCompoundChange(spRow.species, { BP_ratio: parseFloat(e.target.value) || 1 })}
+                              className={inputClass}
+                              placeholder="—"
+                            />
+                          </td>
+                          <td className="px-2 py-1 w-32">
+                            <input
+                              type="number" min={0} step="any"
+                              value={psc?.observed_CLh ?? ''}
+                              disabled={!spRow.include}
+                              onChange={e => handlePerSpeciesCompoundChange(spRow.species, { observed_CLh: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                              className={inputClass}
+                              placeholder="optional"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            {/* fumic correction toggle + model checkboxes — second row */}
-            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-6">
-              {/* fumic correction */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Switch.Root
-                  checked={inputs.compound.apply_fumic_correction}
-                  onCheckedChange={v => handleCompoundChange({ ...inputs.compound, apply_fumic_correction: v })}
-                  className={clsx(
-                    'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
-                    inputs.compound.apply_fumic_correction ? 'bg-teal-600' : 'bg-slate-300',
-                  )}
-                >
-                  <Switch.Thumb className={clsx(
-                    'pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg transition-transform',
-                    inputs.compound.apply_fumic_correction ? 'translate-x-4' : 'translate-x-0',
-                  )} />
-                </Switch.Root>
-                <span className="text-xs font-medium text-slate-600">
-                  Apply {inputs.compound.CLint_source === 'microsomes' ? 'fumic' : 'fuhep'} correction
-                </span>
-              </label>
-
-              {/* Divider */}
-              <div className="h-4 w-px bg-slate-200" />
-
-              {/* Model checkboxes */}
+            {/* Model checkboxes */}
+            <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Models:</span>
               {ALL_MODELS.map(m => {
                 const cfg = IVIVE_MODEL_CONFIGS[m];
